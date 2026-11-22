@@ -23,10 +23,20 @@ BOOTARGS+=" blkdevparts=mmcblk0:${FAT_MIB}M@1M(x7boot),${ROOT_MIB}M(x7root)"
 BOOTARGS+=" panic=0 clk_ignore_unused nzclk=900 consoleblank=0 loglevel=5"
 BOOTARGS+=" vt.global_cursor_default=0"
 
-gcc=$(ls "$HOST_DIR"/bin/mipsel-*-linux-gnu-gcc | head -n 1)
+# first existing file of a list (no pipelines: pipefail + a missing file
+# would stop the script silently)
+first() {
+	local f
+	for f in "$@"; do
+		[ -e "$f" ] && { echo "$f"; return 0; }
+	done
+	return 0
+}
+gcc=$(first "$HOST_DIR"/bin/mipsel-*-linux-gnu-gcc)
+[ -n "$gcc" ] || { echo "no mipsel cross gcc in $HOST_DIR/bin"; exit 1; }
 CROSS=${gcc%gcc}
-MKFS=$(ls "$HOST_DIR"/sbin/mkfs.fat "$HOST_DIR"/bin/mkfs.fat "$HOST_DIR"/sbin/mkfs.vfat \
-	"$HOST_DIR"/bin/mkfs.vfat 2>/dev/null | head -n 1)
+MKFS=$(first "$HOST_DIR"/sbin/mkfs.fat "$HOST_DIR"/bin/mkfs.fat "$HOST_DIR"/sbin/mkfs.vfat \
+	"$HOST_DIR"/bin/mkfs.vfat)
 [ -n "$MKFS" ] || { echo "mkfs.fat not found in $HOST_DIR (host-dosfstools)"; exit 1; }
 MCOPY=$HOST_DIR/bin/mcopy
 export MTOOLS_SKIP_CHECK=1
@@ -36,7 +46,7 @@ key_args=()
 if [ -n "${X7_V27_KEY:-}" ]; then
 	key_args=(--v27-key "$X7_V27_KEY")
 fi
-SYSMAP=$(ls "$BUILD_DIR"/linux-custom/System.map 2>/dev/null | head -n 1)
+SYSMAP=$(first "$BUILD_DIR"/linux-custom/System.map)
 python3 "$BOARD/mkx7boot.py" --vmlinux "$OUT/vmlinux" ${SYSMAP:+--system-map "$SYSMAP"} \
 	--dts "$BOARD/x7game-r36sx.dts" \
 	--bootargs "$BOOTARGS" --cross "$CROSS" --dtc "$HOST_DIR/bin/dtc" \
