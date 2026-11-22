@@ -76,7 +76,7 @@ def assemble(cross, source, address, tmp, name):
     (tmp / f'{name}.ld').write_text(
         'ENTRY(_start)\nSECTIONS { . = 0x%08x; .text : { *(.text) } '
         '/DISCARD/ : { *(.reginfo) *(.MIPS.abiflags) *(.pdr) *(.gnu.attributes) } }\n' % address)
-    run(f'{cross}as', '-mips32r2', '-EL', '-mno-abicalls', '-mno-shared',
+    run(f'{cross}as', '-mips32r2', '-EL', '-non_shared',
         '-o', tmp / f'{name}.o', tmp / f'{name}.S')
     run(f'{cross}ld', '-EL', '-T', tmp / f'{name}.ld', '-o', tmp / f'{name}.elf', tmp / f'{name}.o')
     run(f'{cross}objcopy', '-O', 'binary', tmp / f'{name}.elf', tmp / f'{name}.bin')
