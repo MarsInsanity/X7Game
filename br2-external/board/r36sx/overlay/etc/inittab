@@ -13,8 +13,9 @@
 # every hardware event (x7-hwmon).
 tty1::respawn:/usr/bin/x7-console
 
-# A root shell on the USB cable (OTG port -> PuTTY, Serial, any speed).
-ttyGS0::respawn:/sbin/getty -L -n -l /usr/libexec/x7-autologin 115200 ttyGS0 vt100
+# A root shell on the USB cable (OTG port -> PuTTY, Serial, any speed, then
+# press Enter).
+ttyGS0::respawn:/usr/libexec/x7-usb-shell
 
 ::ctrlaltdel:/sbin/reboot
 

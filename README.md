@@ -56,8 +56,14 @@ start volume) and `x7game/logs/boot.log` the log of the last start.
 ## USB serial shell
 
 Connect the console's **OTG** USB-C port to a PC. Windows 10/11 shows a new
-**USB Serial Device (COMx)** (no driver needed). In PuTTY choose connection
-type **Serial**, that COM port, any speed, press Enter: you get a root shell.
+**USB Serial Device (COMx)** in Device Manager > Ports (no driver needed). In
+PuTTY choose connection type **Serial**, that COM port, any speed; under
+Connection > Serial set **Flow control: None**; click Open, then **press
+Enter**: you get a root shell. Only one program can have the COM port open
+at a time.
+
+If it doesn't work, switch the console off with POWER and look at
+`x7game/logs/last-session.log` on the card (its "USB serial shell" section).
 
 ```
 x7-status                    the hardware state

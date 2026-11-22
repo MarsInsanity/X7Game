@@ -36,7 +36,13 @@ test -n "$(cat "$G/UDC" 2>/dev/null)" && exit 0
 # background so the start-up goes on.
 bind() {
 	udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
-	test -n "$udc" && echo "$udc" > "$G/UDC"
+	test -n "$udc" || return 1
+	if echo "$udc" > "$G/UDC"; then
+		echo "<5>x7-usb-gadget: USB serial (acm.GS0 -> /dev/ttyGS0) bound to $udc" > /dev/kmsg
+		return 0
+	fi
+	echo "<4>x7-usb-gadget: could not bind to $udc" > /dev/kmsg
+	return 1
 }
 bind && exit 0
 (

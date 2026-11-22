@@ -16,6 +16,11 @@ start)
 	fi
 	;;
 stop)
+	# a report of this session (events, USB shell, logs) for the PC:
+	# x7game/logs/last-session.log, written when the console is switched off
+	if test -d /boot/x7game/logs; then
+		/usr/sbin/x7-report session > /boot/x7game/logs/last-session.log 2>&1
+	fi
 	sync
 	umount /boot 2>/dev/null
 	;;

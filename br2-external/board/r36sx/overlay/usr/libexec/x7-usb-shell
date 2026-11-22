@@ -1,0 +1,41 @@
+#!/bin/sh
+# X7 Game: root shell on the USB serial port (/dev/ttyGS0), started and
+# restarted by init (/etc/inittab). No password: the cable to your own PC is
+# the way in.
+#
+# Same method as NZEUS Deck's nzeus-usb-shell (GPL-3.0,
+# https://github.com/nzeuslab/nzeus-deck), which runs on this kernel and USB
+# driver and works with Windows: no getty - the script opens the port itself,
+# makes it its controlling terminal, sets sane terminal modes and starts the
+# shell. On the PC: PuTTY, Serial, the COM port, any speed, then press Enter.
+TTY=/dev/ttyGS0
+STATE=/run/x7-usb-shell.state
+
+# No port yet (gadget not made): wait a little, then let init start us again.
+if ! test -c "$TTY"; then
+	echo "waiting for $TTY ($(cut -d' ' -f1 /proc/uptime) s)" > "$STATE"
+	sleep 5
+	exit 0
+fi
+
+export HOME=/root USER=root LOGNAME=root SHELL=/bin/sh TERM=vt100 LANG=C.UTF-8
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+cd /root 2>/dev/null || cd /
+
+# init starts us as the leader of a new session; opening the port then makes
+# it our controlling terminal (job control, Ctrl+C, and a hang-up when the
+# USB link goes away, after which init starts a new shell). Started by hand
+# instead: make a new session first.
+sid=$(sed 's/^.*) //' "/proc/$$/stat" | cut -d' ' -f4)
+if test "$sid" != "$$"; then
+	exec setsid -c /bin/sh "$0" "$@" < "$TTY" > "$TTY" 2>&1
+fi
+exec 0<> "$TTY" 1>&0 2>&0 || exit 1
+stty sane 2>/dev/null
+echo "shell started on $TTY (pid $$, $(cut -d' ' -f1 /proc/uptime) s)" > "$STATE"
+echo
+echo "X7 Game - root shell on the USB cable."
+echo "  x7-status       hardware state      tail -f /run/x7-events.log  live events"
+echo "  x7-soundtest    play a test sound   x7-colortest   colour test on the screen"
+echo "  x7-tf2-probe    find TF2's wiring   poweroff       switch the console off"
+exec /bin/sh -l

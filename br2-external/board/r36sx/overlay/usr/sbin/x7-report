@@ -1,0 +1,28 @@
+#!/bin/sh
+# X7 Game: print a diagnostic report (used for x7game/logs/boot.log and
+# last-session.log on the SD card, and handy over the USB shell).
+#   x7-report [boot|session]
+echo "== X7 Game $1 report =="
+cat /etc/x7game-release 2>/dev/null
+uname -a
+echo "uptime: $(cut -d' ' -f1 /proc/uptime) s"
+echo
+echo "== USB serial shell =="
+for f in /sys/kernel/config/usb_gadget/x7game/UDC /sys/class/udc/*/state /run/x7-usb-shell.state; do
+	test -e "$f" && echo "$f: $(cat "$f" 2>/dev/null)"
+done
+ls -l /dev/ttyGS0 2>&1
+echo
+echo "== processes =="
+ps
+if test "$1" = session; then
+	echo
+	echo "== console events =="
+	cat /run/x7-events.log 2>/dev/null
+	echo
+	echo "== system log (last 200 lines) =="
+	tail -n 200 /var/log/messages 2>/dev/null
+fi
+echo
+echo "== kernel log =="
+dmesg

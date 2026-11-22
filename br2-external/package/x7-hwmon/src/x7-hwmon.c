@@ -540,7 +540,7 @@ static int otg_now(char *raw, size_t len)
 
 static void otg_tick(int initial)
 {
-	char raw[64] = "";
+	char raw[128] = "";
 	int s = otg_now(raw, sizeof(raw));
 
 	if (s == otg_state && !initial)
@@ -557,7 +557,10 @@ static void otg_tick(int initial)
 		say(C_USB, "OTG port: cable detected, the computer is setting it up (%s)", raw);
 		break;
 	case 2:
-		say(C_USB, "OTG port: CONNECTED to a computer - open the new COM port in PuTTY (Serial) for a shell");
+		say(C_USB, "OTG port: CONNECTED to a computer");
+		say(C_USB, "  shell: PuTTY > Serial > the new COM port (any speed, flow control None) > Open, then press Enter");
+		if (!read_file("/run/x7-usb-shell.state", raw, sizeof(raw)))
+			say(C_USB, "  (USB shell: %s)", raw);
 		break;
 	case 3:
 		say(C_USB, "OTG port: connected, the computer has suspended the port");

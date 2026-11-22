@@ -17,6 +17,10 @@ doesn't show it). Don't format, shrink or move this partition.
 
 USB shell: connect the console's OTG port to a PC. Windows 10/11 shows a new
 "USB Serial Device (COMx)". In PuTTY choose Connection type "Serial", that
-COM port, any speed, then press Enter.
+COM port, any speed, Flow control "None" (Connection > Serial), click Open,
+then press Enter.
+
+logs\last-session.log is written when you switch the console off with the
+POWER button: what happened in that session (events, USB shell, logs).
 
 Source code, licences and bug reports: https://github.com/MarsInsanity/X7Game

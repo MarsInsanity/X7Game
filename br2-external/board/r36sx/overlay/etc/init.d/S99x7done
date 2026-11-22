@@ -1,5 +1,5 @@
 #!/bin/sh
-# X7 Game: end of start-up. Save the kernel log to the SD card
+# X7 Game: end of start-up. Save a report to the SD card
 # (x7game/logs/boot.log, readable on a PC; the previous one is kept as
 # boot-previous.log) and keep kernel messages off the console from now on,
 # so the hardware monitor's lines stay readable.
@@ -7,14 +7,7 @@ test "$1" = start || exit 0
 L=/boot/x7game/logs
 if test -d "$L"; then
 	test -f "$L/boot.log" && mv -f "$L/boot.log" "$L/boot-previous.log"
-	{
-		echo "== X7 Game boot log =="
-		cat /etc/x7game-release 2>/dev/null
-		uname -a
-		echo "uptime: $(cut -d' ' -f1 /proc/uptime) s"
-		echo
-		dmesg
-	} > "$L/boot.log" 2>&1
+	/usr/sbin/x7-report boot > "$L/boot.log" 2>&1
 	sync
 fi
 dmesg -n 1
