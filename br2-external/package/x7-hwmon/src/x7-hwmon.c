@@ -559,7 +559,7 @@ static void otg_tick(int initial)
 		break;
 	case 2:
 		say(C_USB, "OTG port: CONNECTED to a computer");
-		say(C_USB, "  shell: PuTTY > Serial > the new COM port (any speed, flow control None) > Open, then press Enter");
+		say(C_USB, "  shell: PuTTY > Session > Connection type Serial, Serial line COMx, Speed 115200 > Open, press Enter");
 		if (!read_file("/run/x7-usb-shell.state", raw, sizeof(raw)))
 			say(C_USB, "  (USB shell: %s)", raw);
 		break;

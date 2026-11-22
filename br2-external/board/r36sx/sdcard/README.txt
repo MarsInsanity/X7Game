@@ -19,9 +19,10 @@ Your files go on the second drive, X7DATA (made at the first start): roms\,
 bios\, saves\, music\, videos\, photos\ ... - see README.txt there.
 
 USB shell: connect the console's OTG port to a PC. Windows 10/11 shows a new
-"USB Serial Device (COMx)". In PuTTY choose Connection type "Serial", that
-COM port, any speed, Flow control "None" (Connection > Serial), click Open,
-then press Enter.
+"USB Serial Device (COMx)" in Device Manager. In PuTTY, on the Session page
+(top of the tree) choose Connection type "Serial", Serial line COMx, Speed
+115200, click Open, then press Enter. (Setting only the Connection > Serial
+page is not enough: with "SSH" still selected, Open does nothing.)
 
 logs\last-session.log is written when you switch the console off with the
 POWER button: what happened in that session (events, USB shell, logs).

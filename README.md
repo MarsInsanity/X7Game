@@ -87,11 +87,19 @@ On a PC the card then shows two drives:
 ## USB serial shell
 
 Connect the console's **OTG** USB-C port to a PC. Windows 10/11 shows a new
-**USB Serial Device (COMx)** in Device Manager > Ports (no driver needed). In
-PuTTY choose connection type **Serial**, that COM port, any speed; under
-Connection > Serial set **Flow control: None**; click Open, then **press
-Enter**: you get a root shell. Only one program can have the COM port open
-at a time.
+**USB Serial Device (COMx)** in Device Manager > Ports (no driver needed;
+note the number, it can change between X7 Game versions). In PuTTY:
+
+1. On the **Session** page (the top of the tree on the left) set
+   **Connection type: Serial**, **Serial line: COMx** (the number from
+   Device Manager) and **Speed: 115200** (any speed works). The Connection >
+   Serial page alone is not enough: with "SSH" still selected on the Session
+   page and no host name, Open does nothing.
+2. Optional: Connection > Serial > Flow control: None.
+3. Click **Open**, then **press Enter**: you get a root shell
+   (`x7game:~#`).
+
+Only one program can have the COM port open at a time.
 
 If it doesn't work, switch the console off with POWER and look at
 `x7game/logs/last-session.log` on the card (its "USB serial shell" section).
