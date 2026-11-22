@@ -20,3 +20,5 @@ once it exists, also when you flash a newer X7 Game image onto the card
 Missing folders are created again at every start. You can add your own.
 
 On the console this drive is /share.
+
+Updates: copy an x7game-...x7update file here and switch the console on.

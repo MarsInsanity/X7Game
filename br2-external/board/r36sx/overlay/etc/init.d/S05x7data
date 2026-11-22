@@ -2,7 +2,7 @@
 # X7 Game: the data partition "X7DATA" - ROMs, BIOS files, saves, music,
 # videos, photos - mounted at /share. A PC shows it as a second drive.
 #
-# It covers the card from 1 GiB to the end (/dev/mmcblk0p3 through
+# It covers the card from 1 GiB to the end (/dev/mmcblk0p4 through
 # blkdevparts=; partition 2 in the partition table for PCs). At the first
 # start it doesn't exist yet: it is formatted (exFAT, or FAT32 with
 # data_filesystem=fat32 in x7game.cfg) and added to the partition table.
@@ -11,7 +11,7 @@
 # is adopted and only its partition table entry is restored. Never formats a
 # partition that holds a file system.
 DEV=/dev/mmcblk0
-PART=/dev/mmcblk0p3
+PART=/dev/mmcblk0p4
 START=2097152			# 1 GiB in 512-byte sectors (post-image.sh DATA_START_MIB)
 MNT=/share
 STATE=/run/x7-data.state
@@ -24,7 +24,7 @@ say() {
 
 case "$1" in
 start)
-	. /run/x7game.conf 2>/dev/null
+	test -f /run/x7game.conf && . /run/x7game.conf
 	test -b "$PART" || { say "no data area on this card ($PART missing)"; exit 0; }
 	probe=$(/usr/sbin/x7-datapart probe "$DEV" "$START") || { say "could not read the card"; exit 0; }
 	eval "$probe"

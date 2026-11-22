@@ -3,7 +3,7 @@
 # (automatic speaker/headphone switching is done by the kernel driver) and
 # the start volume.
 test "$1" = start || exit 0
-. /run/x7game.conf 2>/dev/null
+test -f /run/x7game.conf && . /run/x7game.conf
 A=$(ls -d /sys/bus/platform/devices/*.audio 2>/dev/null | head -n 1)
 case "$headphone_plugged_level" in
 0|1) test -n "$A" && echo "$headphone_plugged_level" > "$A/headphones" 2>/dev/null ;;

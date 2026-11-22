@@ -18,6 +18,11 @@ doesn't show it). Don't format, shrink or move this partition.
 Your files go on the second drive, X7DATA (made at the first start): roms\,
 bios\, saves\, music\, videos\, photos\ ... - see README.txt there.
 
+Updates: copy an x7game-...x7update file into X7DATA and switch the console
+on. It installs itself and restarts; your files and settings stay.
+previous\ holds the kernel files of the system that ran before the last
+update (to go back: copy them into cubegm\, or x7-update --rollback).
+
 USB shell: connect the console's OTG port to a PC. Windows 10/11 shows a new
 "USB Serial Device (COMx)" in Device Manager. In PuTTY, on the Session page
 (top of the tree) choose Connection type "Serial", Serial line COMx, Speed

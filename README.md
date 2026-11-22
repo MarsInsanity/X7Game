@@ -23,6 +23,7 @@ retro-gaming frontend comes next.
 | Boot | Linux 7.2 + BusyBox from the SD card (TF1), read-only squashfs root, no initramfs. Target: under 10 s to the console |
 | Image | one `.img` of about 54 MiB (FAT32 boot partition + root file system) |
 | Data partition | made at the first start on the rest of the card: **X7DATA** (exFAT), a second drive on a PC, for ROMs, BIOS files, saves, music, videos and photos (RecalBox folder names). Flashing a newer image keeps it |
+| Updates | copy a `.x7update` file into X7DATA and switch on: installed into the second system slot, verified, then the console restarts into it; data and settings stay, the previous version stays available |
 | Console | the boot log, the hardware state, **"Welcome to X7 Game!"**, then a line for every hardware event |
 | Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER, each press and release is printed. The analog sticks are wired to the D-pad and face buttons |
 | Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console; the panel timing is the one the bootloader sets up. `x7-colortest` shows colour ramps |
@@ -78,11 +79,45 @@ On a PC the card then shows two drives:
 - On the console it is mounted at `/share`.
 - Missing folders are created again at every start; nothing in it is ever
   deleted.
-- **Updating keeps your data:** flashing a newer X7 Game image (balenaEtcher,
-  or Rufus in image mode) rewrites only the first part of the card. The next
-  start finds X7DATA where it was and only restores its partition table
-  entry, it never formats a partition that holds a file system. Back up
-  anyway before re-flashing.
+- **Re-flashing keeps your data:** flashing a newer X7 Game image
+  (balenaEtcher, or Rufus in image mode) rewrites only the first part of the
+  card. The next start finds X7DATA where it was and only restores its
+  partition table entry; it never formats a partition that holds a file
+  system. Back up anyway before re-flashing.
+
+## Updating
+
+From X7 Game 0.3 on, updates don't need a PC flashing tool:
+
+1. Download `x7game-r36sx-<version>.x7update` from the
+   [releases](../../releases).
+2. Copy it into the **X7DATA** drive (or `X7DATA/update/`).
+3. Put the card back and switch the console on. It checks the file, installs
+   it (a few seconds, shown on the screen), renames it to
+   `.x7update.installed` and restarts into the new version.
+
+Your files (X7DATA) and settings (`x7game/x7game.cfg`) are not touched. The
+update is checked against its checksums before anything is written, and it
+waits for a charger if the battery is low (below about 25 %,
+`battery_update_level` in `x7game.cfg`). A file for another console or card
+layout is renamed to `.x7update.rejected`; `x7game/logs/update.log` says why.
+
+How it works: the card has two system slots (A and B). An update writes the
+new system into the slot that is not running and reads it back; only then
+it switches the kernel files on X7GAME to the kernel for that slot. If the
+power fails while the slot is written, the old system is untouched and the
+update simply runs again at the next start.
+
+**Going back:** the previous kernel files are kept in `x7game/previous/`
+and the previous system stays in the other slot until the next update.
+Over the USB shell type `x7-update --rollback` then `reboot`, or on a PC copy
+the files from `x7game/previous/` into `cubegm/`.
+
+Over the USB shell: `x7-update --status` (running slot and versions),
+`x7-update --check FILE`, `x7-update FILE` (install, then `reboot`).
+
+From 0.2 or older, flash the 0.3 image once (X7DATA is kept): the system
+slots came with 0.3.
 
 ## USB serial shell
 
@@ -162,7 +197,7 @@ The first build takes about an hour (it builds the toolchain).
 | `br2-external/board/r36sx/linux.config`, `linux-x7.fragment` | kernel configuration |
 | `br2-external/board/r36sx/x7game-r36sx.dts` | the board description appended to the kernel |
 | `br2-external/board/r36sx/mkx7boot.py` | builds the boot files the factory bootloader loads |
-| `br2-external/board/r36sx/mkdisk.py`, `post-image.sh` | build the SD card image (card layout in `post-image.sh`) |
+| `br2-external/board/r36sx/mkdisk.py`, `mkupdate.py`, `post-image.sh` | build the SD card image and the update file (card layout in `post-image.sh`) |
 | `br2-external/board/r36sx/overlay/` | the system's own files (init scripts, USB shell) |
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
 | `br2-external/package/x7-hwmon/` | the console's hardware monitor, the TF2 probe and `x7-datapart` (data partition table entry) |

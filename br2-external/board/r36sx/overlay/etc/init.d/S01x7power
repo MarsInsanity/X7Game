@@ -3,7 +3,7 @@
 # battery_boot_level (x7game.cfg) and no charger is plugged into the DC port,
 # say so and switch off again instead of starting on an almost empty battery.
 test "$1" = start || exit 0
-. /run/x7game.conf 2>/dev/null
+test -f /run/x7game.conf && . /run/x7game.conf
 P=$(ls -d /sys/bus/platform/devices/*.power 2>/dev/null | head -n 1)
 test -n "$P" || exit 0
 test "$(cat /sys/class/power_supply/charger/online 2>/dev/null)" = 1 && exit 0

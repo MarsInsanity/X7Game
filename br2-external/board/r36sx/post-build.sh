@@ -3,9 +3,11 @@
 set -e
 TARGET=$1
 
-mkdir -p "$TARGET/boot" "$TARGET/root" "$TARGET/share"
+mkdir -p "$TARGET/boot" "$TARGET/root" "$TARGET/share" "$TARGET/usr/share/x7game"
+# the legacy uImage magic, for x7-update (plain or V2.7-wrapped boot files)
+printf '\047\005\031\126' > "$TARGET/usr/share/x7game/uimage-magic"
 chmod 0755 "$TARGET"/etc/init.d/S*x7* "$TARGET"/usr/bin/x7-* \
-	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/libexec/x7-usb-shell"
+	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/sbin/x7-update" "$TARGET/usr/libexec/x7-usb-shell"
 
 cat > "$TARGET/etc/x7game-release" <<EOF
 X7_VERSION=${X7_VERSION:-dev}

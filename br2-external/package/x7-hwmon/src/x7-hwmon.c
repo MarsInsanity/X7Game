@@ -707,7 +707,14 @@ static void status_lines(int at_boot)
 		}
 	}
 	uname(&u);
-	say(C_SYS, "%s - Linux %s (%s)", release, u.release, u.machine);
+	{
+		const char *slot = "?";
+
+		if (!read_file("/proc/cmdline", buf, sizeof(buf)))
+			slot = strstr(buf, "root=/dev/mmcblk0p2 ") ? "A" :
+			       strstr(buf, "root=/dev/mmcblk0p3 ") ? "B" : "?";
+		say(C_SYS, "%s - Linux %s (%s), system slot %s", release, u.release, u.machine, slot);
+	}
 	if (at_boot)
 		say(C_SYS, "Started in %.1f s (kernel + system; the bootloader's logo time is extra)", uptime());
 	else

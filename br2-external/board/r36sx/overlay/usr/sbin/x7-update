@@ -1,0 +1,227 @@
+#!/bin/sh
+# x7-update - install an X7 Game update file (.x7update) without touching
+# your data (X7DATA) or your settings (x7game/x7game.cfg).
+#
+#   x7-update [FILE]          check and install FILE (default: the newest
+#                             *.x7update in X7DATA or X7DATA/update), then
+#                             "reboot" to start the new system
+#   x7-update --check [FILE]  only check the file
+#   x7-update --boot          start-up (S06x7update): install an update file
+#                             if there is one, then restart by itself
+#   x7-update --rollback      go back to the system that ran before the last
+#                             update (then "reboot")
+#   x7-update --status        running system slot, versions
+#
+# How it is safe: the card has two system slots (A /dev/mmcblk0p2, B
+# /dev/mmcblk0p3). The new system is written into the slot that is NOT
+# running and read back; only then the kernel files on X7GAME (cubegm/) are
+# replaced - one at a time, each written next to the old one, checked and
+# renamed over it - by the kernel built for that slot. Power lost while the
+# slot is written: the old system is untouched, the update runs again at the
+# next start. The previous kernel files stay in x7game/previous/ and the
+# previous system in its slot, until the next update.
+BOOT=/boot
+CUBE=$BOOT/cubegm
+PREV=$BOOT/x7game/previous
+LOG=$BOOT/x7game/logs/update.log
+WORK=/tmp/x7update
+LAYOUT=2
+
+say() {
+	echo "X7 Game update: $*"
+	echo "[$(cut -d' ' -f1 /proc/uptime) s] $*" >> "$LOG" 2>/dev/null
+}
+# stop: 1 = this file can't be installed, 3 = try again later
+die() { say "STOPPED: $*"; exit 1; }
+later() { say "NOT NOW: $*"; exit 3; }
+
+active_slot() {
+	case " $(cat /proc/cmdline) " in
+	*" root=/dev/mmcblk0p2 "*) echo A ;;
+	*" root=/dev/mmcblk0p3 "*) echo B ;;
+	*) echo "?" ;;
+	esac
+}
+
+# plain uImage kernel (V2.6 firmware stack) or V2.7 wrapper: the first 4
+# bytes against the uImage magic 27 05 19 56 (written by post-build.sh)
+variant_now() {
+	if head -c 4 "$CUBE/advapi32.dll" 2>/dev/null | cmp -s - /usr/share/x7game/uimage-magic; then
+		echo plain
+	else
+		echo v27protected
+	fi
+}
+
+mf() { sed -n "s/^$1=\([A-Za-z0-9._-]*\)\$/\1/p" "$WORK/manifest" | head -n 1; }
+installed_version() { sed -n 's/^X7_VERSION=//p' /etc/x7game-release; }
+find_update() { ls -t /share/*.x7update /share/update/*.x7update 2>/dev/null | head -n 1; }
+
+# check FILE: manifest, compatibility, every file's checksum
+check() {
+	pkg=$1
+	test -f "$pkg" || die "no such file: $pkg"
+	mountpoint -q "$BOOT" || later "the boot partition (X7GAME) is not mounted"
+	rm -rf "$WORK"
+	mkdir -p "$WORK"
+	tar -xOf "$pkg" x7update/manifest > "$WORK/manifest" 2>/dev/null ||
+		die "$(basename "$pkg") is not an X7 Game update file"
+	tar -xOf "$pkg" x7update/SHA256SUMS > "$WORK/SHA256SUMS" 2>/dev/null ||
+		die "$(basename "$pkg") has no checksums"
+	test "$(mf X7U_FORMAT)" = 1 || die "unknown update file format"
+	test "$(mf X7U_BOARD)" = r36sx || die "this update is for another console"
+	test "$(mf X7U_LAYOUT)" = "$LAYOUT" ||
+		die "this update needs a different card layout: flash the full image instead (X7DATA is kept)"
+	test "$(mf X7U_VARIANT)" = "$(variant_now)" ||
+		die "this update is for $(mf X7U_VARIANT) consoles, this console is $(variant_now)"
+	NEWVER=$(mf X7U_VERSION)
+	ROOTBYTES=$(mf X7U_ROOT_BYTES)
+	case "$ROOTBYTES" in ''|*[!0-9]*) die "the update file's manifest is damaged" ;; esac
+	say "checking $(basename "$pkg"): X7 Game $NEWVER (installed: $(installed_version))"
+	n=0
+	while read -r sum path; do
+		case "$path" in boot/*|root/*) ;; *) die "unexpected file in the update: $path" ;; esac
+		case "${path#*/}" in ''|*[!A-Za-z0-9._-]*) die "unexpected file in the update: $path" ;; esac
+		got=$(tar -xOf "$pkg" "x7update/$path" 2>/dev/null | sha256sum | cut -d' ' -f1)
+		test "$got" = "$sum" || die "$path is damaged (checksum) - copy the update file again"
+		n=$((n + 1))
+	done < "$WORK/SHA256SUMS"
+	test "$n" -ge 9 || die "the update file is incomplete ($n files)"
+	say "update file checked: $n files OK"
+}
+
+power_ok() {
+	test "$(cat /sys/class/power_supply/charger/online 2>/dev/null)" = 1 && return 0
+	p=$(ls -d /sys/bus/platform/devices/*.power 2>/dev/null | head -n 1)
+	l=$(sed -n 's/.*battery=\([0-9][0-9]*\).*/\1/p' "$p/stock_levels" 2>/dev/null)
+	test -n "$l" && test "$l" -ge "${battery_update_level:-140}"
+}
+
+# put NAME TARGET: write a boot file next to TARGET, check it, rename over it
+put() {
+	tar -xOf "$pkg" "x7update/boot/$1" > "$2.x7new" 2>/dev/null || return 1
+	sync
+	want=$(grep "  boot/$1\$" "$WORK/SHA256SUMS" | cut -d' ' -f1)
+	test "$(sha256sum < "$2.x7new" | cut -d' ' -f1)" = "$want" || return 1
+	mv -f "$2.x7new" "$2"
+}
+
+install_update() {
+	pkg=$1
+	test -f /run/x7game.conf && . /run/x7game.conf
+	check "$pkg"
+	power_ok || later "the battery is too low for an update: plug in the charger"
+	cur=$(active_slot)
+	case "$cur" in
+	A) new=B dev=/dev/mmcblk0p3 kern=kernel-b.uImage ;;
+	B) new=A dev=/dev/mmcblk0p2 kern=kernel-a.uImage ;;
+	*) die "can't tell which system slot is running" ;;
+	esac
+	test -b "$dev" || die "system slot $new ($dev) is missing"
+	room=$(($(cat "/sys/class/block/${dev#/dev/}/size") * 512))
+	test "$ROOTBYTES" -le "$room" || die "the new system doesn't fit into slot $new"
+
+	say "writing the new system into slot $new (running: slot $cur)..."
+	tar -xOf "$pkg" x7update/root/rootfs.squashfs | dd of="$dev" bs=1M conv=fsync 2>/dev/null ||
+		later "writing slot $new failed - the running system is unchanged"
+	sync
+	echo 3 > /proc/sys/vm/drop_caches		# read back from the card itself
+	want=$(grep '  root/rootfs.squashfs$' "$WORK/SHA256SUMS" | cut -d' ' -f1)
+	got=$(head -c "$ROOTBYTES" "$dev" | sha256sum | cut -d' ' -f1)
+	test "$got" = "$want" || later "slot $new reads back wrong - the running system is unchanged"
+	say "slot $new written and checked"
+
+	# keep the running system's boot files (x7-update --rollback)
+	mkdir -p "$PREV"
+	for f in advapi32.dll vmlinux.uImage ApplicationFrame.dll avp.uImage xgame-logo.bmp; do
+		if test -f "$CUBE/$f"; then
+			cp "$CUBE/$f" "$PREV/$f.x7new" && mv -f "$PREV/$f.x7new" "$PREV/$f"
+		fi
+	done
+	cp "$BOOT/x7game/VERSION.txt" "$PREV/VERSION.txt" 2>/dev/null
+	echo "slot=$cur" > "$PREV/slot"
+	echo "version=$(installed_version)" >> "$PREV/slot"
+	sync
+
+	# boot files: the support files first, the kernel (the switch) last
+	for f in ApplicationFrame.dll:avp.uImage avp.uImage:avp.uImage Bubbles.scr:Bubbles.scr \
+		 dtb.bin:dtb.bin xgame-logo.bmp:xgame-logo.bmp; do
+		put "${f#*:}" "$CUBE/${f%%:*}" ||
+			die "writing cubegm/${f%%:*} failed (the old system still starts)"
+	done
+	put "$kern" "$CUBE/advapi32.dll" && put "$kern" "$CUBE/vmlinux.uImage" ||
+		die "switching the kernel failed: on a PC, copy x7game/previous/* into cubegm/"
+	put README.txt "$BOOT/x7game/README.txt"
+	put VERSION.txt "$BOOT/x7game/VERSION.txt"
+	sync
+	say "installed X7 Game $NEWVER in slot $new (previous: $(installed_version) in slot $cur)"
+}
+
+rollback() {
+	mountpoint -q "$BOOT" || die "the boot partition (X7GAME) is not mounted"
+	test -f "$PREV/advapi32.dll" || die "there is no previous system (x7game/previous is empty)"
+	prev=$(sed -n 's/^slot=//p' "$PREV/slot" 2>/dev/null)
+	test "$prev" != "$(active_slot)" || die "the previous system is the one running now"
+	for f in ApplicationFrame.dll avp.uImage xgame-logo.bmp advapi32.dll vmlinux.uImage; do
+		if test -f "$PREV/$f"; then
+			cp "$PREV/$f" "$CUBE/$f.x7new" && mv -f "$CUBE/$f.x7new" "$CUBE/$f" ||
+				die "copying $f back failed"
+		fi
+	done
+	cp "$PREV/VERSION.txt" "$BOOT/x7game/VERSION.txt" 2>/dev/null
+	sync
+	say "the previous system (slot $prev, $(sed -n 's/^version=//p' "$PREV/slot")) starts next: type reboot"
+}
+
+status() {
+	echo "running: X7 Game $(installed_version), system slot $(active_slot), $(variant_now) boot files"
+	if test -f "$PREV/slot"; then
+		echo "previous: $(sed -n 's/^version=//p' "$PREV/slot") in slot $(sed -n 's/^slot=//p' "$PREV/slot") (x7-update --rollback)"
+	else
+		echo "previous: none"
+	fi
+	p=$(find_update)
+	echo "update file waiting: ${p:-none}"
+}
+
+case "$1" in
+--status) status ;;
+--rollback) rollback ;;
+--check)
+	p=${2:-$(find_update)}
+	test -n "$p" || die "no update file found (copy a .x7update file into X7DATA)"
+	check "$p"
+	;;
+--boot)
+	p=$(find_update)
+	test -n "$p" || exit 0
+	say "found $(basename "$p") on X7DATA"
+	( install_update "$p" )
+	rc=$?
+	case $rc in
+	0)
+		mv -f "$p" "$p.installed"
+		sync
+		say "restarting into the new system..."
+		sleep 3
+		reboot
+		sleep 30
+		;;
+	3) say "the update stays on X7DATA and is tried again at the next start" ;;
+	*)
+		mv -f "$p" "$p.rejected"
+		say "renamed to $(basename "$p").rejected (see x7game/logs/update.log)"
+		sleep 5
+		;;
+	esac
+	;;
+*)
+	p=${1:-$(find_update)}
+	test -n "$p" || die "no update file found (copy a .x7update file into X7DATA)"
+	( install_update "$p" ) || exit $?
+	case "$p" in /share/*) mv -f "$p" "$p.installed" ;; esac
+	sync
+	say "done - type reboot to start the new system"
+	;;
+esac
+exit 0

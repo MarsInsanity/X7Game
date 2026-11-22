@@ -1,0 +1,7 @@
+#!/bin/sh
+# X7 Game: an update file (.x7update) on X7DATA is checked and installed at
+# start-up, then the console restarts into the new system (x7-update --boot).
+# Nothing happens when there is none.
+test "$1" = start || exit 0
+/usr/sbin/x7-update --boot
+exit 0

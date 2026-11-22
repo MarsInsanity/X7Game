@@ -7,10 +7,10 @@
  *   x7-datapart write-entry DEVICE START_LBA TYPE      (TYPE: 07 exFAT, 0c FAT32)
  *
  * The card: partition 1 = the FAT32 boot partition at LBA 2048 (in the
- * image), then the hidden root file system, then from START_LBA (1 GiB) to
+ * image), then the two hidden system slots, then from START_LBA (1 GiB) to
  * the end of the card the data partition, which X7 Game creates at its first
  * start. Linux finds all three through blkdevparts= (the data area is
- * /dev/mmcblk0p3 whatever the MBR says); the MBR entry 2 written here is for
+ * /dev/mmcblk0p4 whatever the MBR says); the MBR entry 2 written here is for
  * PCs, which then show the data partition as a second drive.
  *
  * "probe" prints shell assignments:

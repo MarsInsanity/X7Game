@@ -19,6 +19,9 @@ cat /run/x7-data.state 2>/dev/null
 grep " /share \| /boot " /proc/mounts
 df -h /share /boot 2>/dev/null
 echo
+echo "== system slots / updates =="
+/usr/sbin/x7-update --status 2>&1
+echo
 echo "== processes =="
 ps
 if test "$1" = session; then

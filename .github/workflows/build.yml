@@ -101,6 +101,7 @@ jobs:
             zip -9 -j "$GITHUB_WORKSPACE/dist/${img}.zip" "$img"
             xz -9 -T0 -k -c "$img" > "$GITHUB_WORKSPACE/dist/${img}.xz"
           done
+          cp x7game-*.x7update "$GITHUB_WORKSPACE/dist/"
           cp boot-files/boot-files.json "$GITHUB_WORKSPACE/dist/"
           cd "$GITHUB_WORKSPACE/dist"
           sha256sum * > SHA256SUMS
@@ -130,6 +131,10 @@ jobs:
           balenaEtcher or Rufus, put it in the TF1 slot and switch the console on. This image is for
           consoles that run the V2.6 firmware stack (unencrypted boot files). Files named
           \`v27protected\` (if present) are for "bootloader protected" V2.7 consoles.
+
+          **Already running X7 Game 0.3 or newer?** Copy \`x7game-r36sx-${X7_VERSION}.x7update\` into the
+          X7DATA drive and switch the console on: it installs itself and restarts. Your files and
+          settings stay. (From 0.2 or older, flash the image once; X7DATA is kept.)
 
           See the README for what works, the USB serial shell and how to report problems.
           EOF
