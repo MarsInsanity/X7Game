@@ -689,7 +689,7 @@ static void data_status(void)
 	}
 }
 
-static void status_lines(void)
+static void status_lines(int at_boot)
 {
 	char buf[256], release[96] = "X7 Game", path[256];
 	struct utsname u;
@@ -708,7 +708,10 @@ static void status_lines(void)
 	}
 	uname(&u);
 	say(C_SYS, "%s - Linux %s (%s)", release, u.release, u.machine);
-	say(C_SYS, "Started in %.1f s (kernel + system; the bootloader's logo time is extra)", uptime());
+	if (at_boot)
+		say(C_SYS, "Started in %.1f s (kernel + system; the bootloader's logo time is extra)", uptime());
+	else
+		say(C_SYS, "Up for %.0f s", uptime());
 	if (!read_file("/sys/class/graphics/fb0/virtual_size", buf, sizeof(buf)))
 		sscanf(buf, "%ld,%ld", &xres, &yres);
 	bpp = read_long("/sys/class/graphics/fb0/bits_per_pixel", 0);
@@ -824,11 +827,11 @@ int main(int argc, char **argv)
 	scan_inputs();
 	map_mshc();
 	if (status_only) {
-		status_lines();
+		status_lines(0);
 		return 0;
 	}
 	event_log = fopen(EVENT_LOG, "ae");
-	status_lines();
+	status_lines(1);
 	printf("\n%sWelcome to X7 Game!%s\n\n", use_color ? "\033[1;32m" : "", use_color ? "\033[0m" : "");
 	fflush(stdout);
 	if (event_log) {
