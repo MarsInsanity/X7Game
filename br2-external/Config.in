@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_X7GAME_PATH/package/x7-hwmon/Config.in"

@@ -1,0 +1,130 @@
+name: Build X7 Game
+
+# Builds the SD card image with Buildroot. A pushed tag "vX.Y.Z" (or a manual
+# run with "release" ticked) publishes the image as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 0.1.0). Empty = dev build named after the commit"
+        required: false
+        default: ""
+      release:
+        description: "Publish a GitHub release (needs a version)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      BR_VERSION: "2026.02.3"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Version
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            ver="${GITHUB_REF_NAME#v}"
+          elif [ -n "$INPUT_VERSION" ]; then
+            ver="$INPUT_VERSION"
+          else
+            ver="dev-${GITHUB_SHA::7}"
+          fi
+          case "$ver" in *[!A-Za-z0-9._-]*) echo "bad version: $ver"; exit 1 ;; esac
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "X7_VERSION=$ver" >> "$GITHUB_ENV"
+          echo "X7_COMMIT=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "Building X7 Game $ver"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential bc bison flex cpio \
+            rsync unzip file wget python3 git xz-utils zip libssl-dev libncurses-dev
+
+      - name: Cache Buildroot downloads and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BR_VERSION }}-${{ hashFiles('br2-external/configs/*', 'br2-external/board/r36sx/linux*', 'br2-external/board/r36sx/patches/**') }}
+          restore-keys: |
+            br-${{ env.BR_VERSION }}-
+
+      - name: Build
+        env:
+          X7_V27_KEY: ${{ secrets.X7_V27_KEY }}
+        run: |
+          mkdir -p ~/.buildroot-dl
+          export BR2_DL_DIR=~/.buildroot-dl
+          scripts/build.sh "$GITHUB_WORKSPACE/output" 2>&1 | tee build.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Package
+        id: pkg
+        run: |
+          mkdir -p dist
+          cd output/images
+          for img in x7game-*.img; do
+            zip -9 -j "$GITHUB_WORKSPACE/dist/${img}.zip" "$img"
+            xz -9 -T0 -k -c "$img" > "$GITHUB_WORKSPACE/dist/${img}.xz"
+          done
+          cp boot-files/boot-files.json "$GITHUB_WORKSPACE/dist/"
+          cd "$GITHUB_WORKSPACE/dist"
+          sha256sum * > SHA256SUMS
+          ls -l
+          cat SHA256SUMS
+
+      - name: Upload build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x7game-${{ steps.v.outputs.version }}
+          path: |
+            dist/
+            build.log
+          if-no-files-found: warn
+
+      - name: Publish release
+        if: github.ref_type == 'tag' || (inputs.release && inputs.version != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${X7_VERSION}"
+          cat > notes.md <<EOF
+          X7 Game ${X7_VERSION} (commit ${X7_COMMIT}) for the R36SX / R36S V2.6 / V2.7 (HiChip E3100).
+
+          **Flash \`x7game-r36sx-${X7_VERSION}.img\`** (inside the .zip or .xz) to a microSD card with
+          balenaEtcher or Rufus, put it in the TF1 slot and switch the console on. This image is for
+          consoles that run the V2.6 firmware stack (unencrypted boot files). Files named
+          \`v27protected\` (if present) are for "bootloader protected" V2.7 consoles.
+
+          See the README for what works, the USB serial shell and how to report problems.
+          EOF
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "X7 Game ${X7_VERSION}" \
+              --notes-file notes.md --prerelease
+          fi

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sat, 21 Nov 2026 20:41:06 -0800
+Subject: [PATCH] MIPS: hichip: use the CPU Count/Compare timer on the
+ R36S/R36SX
+
+Taken from NZEUS Deck (https://github.com/nzeuslab/nzeus-deck, commit 43ce9f30abe0956af79d32374b1962f1851c2abc), GPL-2.0.
+---
+ arch/mips/Kconfig | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/mips/Kconfig b/arch/mips/Kconfig
+index e780b7f3a..ca1dd9d99 100644
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -129,7 +129,9 @@ config MACH_HICHIP
+ 	select GENERIC_IRQ_CHIP
+ 	select BUILTIN_DTB if MIPS_NO_APPENDED_DTB
+ 	select USE_OF
+-	select MIPS_EXTERNAL_TIMER
++	# R36S factory AVP retains the shared south timers.
++	select CEVT_R4K
++	select CSRC_R4K
+ 	select SERIAL_8250
+ 	select SERIAL_OF_PLATFORM
+ 	select USE_GENERIC_EARLY_PRINTK_8250

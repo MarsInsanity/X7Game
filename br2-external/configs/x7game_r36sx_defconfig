@@ -1,0 +1,71 @@
+# X7 Game for the R36SX / R36S V2.6 / R36S V2.7 (HiChip E3100: MIPS 74Kc,
+# little-endian, MIPS32r2 with an FPU, 256 MB DDR3 of which Linux uses the
+# lower 128 MiB). Buildroot 2026.02.x LTS, used as an external tree:
+#   make -C buildroot BR2_EXTERNAL=$PWD/br2-external O=$PWD/output x7game_r36sx_defconfig
+#   make -C output
+# (scripts/build.sh does exactly this; .github/workflows/build.yml runs it.)
+
+# --- CPU ---
+BR2_mipsel=y
+BR2_mips_32r2=y
+# hard float, FP mode xx (works with FR=0 and FR=1 kernels)
+BR2_MIPS_FP32_MODE_XX=y
+# Buildroot has no 74Kc entry: MIPS32r2, tuned for the 74K pipeline
+BR2_TARGET_OPTIMIZATION="-mtune=74kc"
+BR2_OPTIMIZE_2=y
+
+# --- Toolchain: Buildroot's own, glibc (the libc Batocera/Recalbox-style
+# emulator packages expect), C++ ready for the future frontend/emulators ---
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_19=y
+BR2_CCACHE=y
+
+# --- System ---
+BR2_TARGET_GENERIC_HOSTNAME="x7game"
+BR2_TARGET_GENERIC_ISSUE="X7 Game"
+BR2_INIT_BUSYBOX=y
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
+BR2_TARGET_GENERIC_ROOT_PASSWD=""
+# Our own inittab (overlay): the console on tty1, a shell on the USB cable
+# BR2_TARGET_GENERIC_GETTY is not set
+# The root file system stays read-only (squashfs)
+# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set
+BR2_SYSTEM_BIN_SH_BUSYBOX=y
+# no network, no writable /var/lib: skip these start-up scripts (faster boot)
+# BR2_PACKAGE_URANDOM_SCRIPTS is not set
+# BR2_PACKAGE_IFUPDOWN_SCRIPTS is not set
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/post-image.sh"
+
+# --- Kernel: Siarhei Volkau's linux-hichip (hc16xx-7.2), the commit NZEUS
+# Deck runs, plus NZEUS Deck's R36S drivers and the X7 Game changes ---
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/SiarheiVolkau/linux-hichip/archive/da5f1a22ef2ff5c46aa3f750fa10825813970b09.tar.gz"
+BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/patches/linux"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/linux.config"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/linux-x7.fragment"
+# the bootloader starts our own container (post-image.sh / mkx7boot.py)
+BR2_LINUX_KERNEL_VMLINUX=y
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+# --- Packages ---
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/busybox.fragment"
+BR2_PACKAGE_ALSA_UTILS=y
+BR2_PACKAGE_ALSA_UTILS_AMIXER=y
+BR2_PACKAGE_ALSA_UTILS_APLAY=y
+BR2_PACKAGE_ALSA_UTILS_SPEAKER_TEST=y
+BR2_PACKAGE_X7_HWMON=y
+
+# --- Images: a squashfs root; post-image.sh builds the SD card image ---
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_GZIP=y
+# BR2_TARGET_ROOTFS_TAR is not set
+BR2_PACKAGE_HOST_DTC=y
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y

@@ -1,0 +1,9 @@
+# Buildroot checkout and build output (scripts/build.sh)
+/buildroot/
+/output/
+/dist/
+*.img
+*.img.xz
+*.img.zip
+build.log
+__pycache__/

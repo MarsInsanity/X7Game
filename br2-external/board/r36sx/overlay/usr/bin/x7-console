@@ -1,0 +1,7 @@
+#!/bin/sh
+# X7 Game: what the screen console (tty1) runs - the hardware monitor. It
+# prints the state of the hardware, then "Welcome to X7 Game!", then every
+# hardware event. init starts it again if it ever stops.
+stty -echo -icanon 2>/dev/null
+printf '\033[?25l'          # no blinking cursor
+exec /usr/bin/x7-hwmon

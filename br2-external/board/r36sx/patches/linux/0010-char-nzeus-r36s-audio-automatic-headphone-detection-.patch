@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sat, 21 Nov 2026 20:43:09 -0800
+Subject: [PATCH] char: nzeus-r36s-audio: automatic headphone detection and
+ speaker switching (X7 Game)
+
+Poll the headphone-detect pin (L15) every 50 ms with debouncing, take the plugged level from the device tree (x7,hp-plugged-level), switch the speaker amp on every change (also during playback) and report SW_HEADPHONE_INSERT on a new input device.
+---
+ drivers/char/nzeus-r36s-audio.c | 102 +++++++++++++++++++++++++++++++-
+ 1 file changed, 99 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/char/nzeus-r36s-audio.c b/drivers/char/nzeus-r36s-audio.c
+index 15c3b444f..c4d4b8da1 100644
+--- a/drivers/char/nzeus-r36s-audio.c
++++ b/drivers/char/nzeus-r36s-audio.c
+@@ -31,9 +31,20 @@
+  * which level means plugged ("off" = ignore the pin, the default). While
+  * headphones are in, the speaker amp stays off during playback (the DAC
+  * output still reaches the jack). No new kernel is needed to set it up.
++ *
++ * X7 Game: the plugged level can also come from the device tree
++ * ("x7,hp-plugged-level" = <0> or <1>). The pin is then polled every 50 ms
++ * and debounced (4 equal samples); each change switches the speaker amp at
++ * once (also during playback) and is reported as SW_HEADPHONE_INSERT on the
++ * input device "R36S headphone jack".
+  */
+ #include <linux/delay.h>
++#include <linux/devm-helpers.h>
+ #include <linux/device.h>
++#include <linux/input.h>
++#include <linux/property.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/hrtimer.h>
+@@ -90,6 +101,12 @@ struct r36s_audio {
+ 	struct gpio_desc *mute;		/* L19: logical 1 = amp off */
+ 	struct gpio_desc *hp;		/* L15 headphone detect (input), NULL if not described */
+ 	int hp_plugged;			/* raw L15 level meaning "plugged in"; -1 = ignore the pin */
++	int hp_raw;			/* debounced raw L15 level, -1 = not sampled yet */
++	int hp_last, hp_same;		/* debounce: last sample and how often it repeated */
++	int hp_reported;		/* last SW_HEADPHONE_INSERT value sent, -1 = none */
++	struct input_dev *jack;		/* "R36S headphone jack" (SW_HEADPHONE_INSERT) */
++	struct delayed_work hp_work;	/* polls L15 */
++	spinlock_t amp_lock;		/* amp_set() from the timer, the poll and ALSA */
+ 	bool amp_on;			/* what we last told L19 */
+ 	struct mutex lock;		/* set-up vs. regs */
+ 	struct snd_card *card;
+@@ -105,18 +122,69 @@ struct r36s_audio {
+ /* headphones in? (only once I know which level means plugged) */
+ static bool hp_in(struct r36s_audio *a)
+ {
+-	return a->hp && a->hp_plugged >= 0 && gpiod_get_raw_value(a->hp) == a->hp_plugged;
++	int raw;
++
++	if (!a->hp || a->hp_plugged < 0)
++		return false;
++	/* the debounced level once the poll has run, else read it now */
++	raw = READ_ONCE(a->hp_raw);
++	if (raw < 0)
++		raw = gpiod_get_raw_value(a->hp);
++	return raw == a->hp_plugged;
+ }
+ 
+ /* the speaker amp: on only while playing and no headphones are in */
+ static void amp_set(struct r36s_audio *a, bool playing)
+ {
+ 	bool on = playing && !hp_in(a);
++	unsigned long flags;
+ 
++	spin_lock_irqsave(&a->amp_lock, flags);
+ 	if (on != a->amp_on) {
+ 		gpiod_set_value(a->mute, on ? 0 : 1);
+ 		a->amp_on = on;
+ 	}
++	spin_unlock_irqrestore(&a->amp_lock, flags);
++}
++
++#define HP_POLL_MS	50
++#define HP_STABLE	4		/* equal samples in a row = 200 ms */
++
++/* X7 Game: report the jack and switch speaker/headphones on every change */
++static void hp_report(struct r36s_audio *a)
++{
++	int in = hp_in(a);
++
++	if (a->jack && in != a->hp_reported) {
++		a->hp_reported = in;
++		input_report_switch(a->jack, SW_HEADPHONE_INSERT, in);
++		input_sync(a->jack);
++	}
++	amp_set(a, READ_ONCE(a->running));
++}
++
++static void hp_poll(struct work_struct *work)
++{
++	struct r36s_audio *a = container_of(to_delayed_work(work), struct r36s_audio, hp_work);
++	int raw = gpiod_get_raw_value(a->hp);
++
++	if (raw >= 0) {
++		if (raw == a->hp_last) {
++			if (a->hp_same < HP_STABLE)
++				a->hp_same++;
++		} else {
++			a->hp_last = raw;
++			a->hp_same = 1;
++		}
++		if (a->hp_same >= HP_STABLE && raw != a->hp_raw) {
++			WRITE_ONCE(a->hp_raw, raw);
++			dev_info(a->dev, "headphone pin L15 = %d: %s\n", raw,
++				 a->hp_plugged < 0 ? "polarity not set" :
++				 raw == a->hp_plugged ? "headphones in" : "headphones out");
++		}
++		hp_report(a);
++	}
++	schedule_delayed_work(&a->hp_work, msecs_to_jiffies(HP_POLL_MS));
+ }
+ 
+ static void sys_rmw(struct r36s_audio *a, unsigned int off, u32 clear, u32 set)
+@@ -448,8 +516,9 @@ static ssize_t headphones_show(struct device *dev, struct device_attribute *attr
+ 
+ 	if (!a->hp)
+ 		return sysfs_emit(buf, "no headphone pin described\n");
+-	return sysfs_emit(buf, "level=%d plugged_level=%d in=%d amp=%d\n",
+-			  gpiod_get_raw_value(a->hp), a->hp_plugged, hp_in(a), a->amp_on);
++	return sysfs_emit(buf, "level=%d debounced=%d plugged_level=%d in=%d amp=%d\n",
++			  gpiod_get_raw_value(a->hp), READ_ONCE(a->hp_raw), a->hp_plugged,
++			  hp_in(a), a->amp_on);
+ }
+ 
+ static ssize_t headphones_store(struct device *dev, struct device_attribute *attr,
+@@ -467,6 +536,7 @@ static ssize_t headphones_store(struct device *dev, struct device_attribute *att
+ 		a->hp_plugged = -1;
+ 	else
+ 		return -EINVAL;
++	hp_report(a);		/* new polarity: switch and report at once */
+ 	return len;
+ }
+ static DEVICE_ATTR_ADMIN_RW(headphones);
+@@ -494,6 +564,10 @@ static int r36s_audio_probe(struct platform_device *pdev)
+ 	a->card = card;
+ 	a->volume = DEFAULT_VOLUME;
+ 	mutex_init(&a->lock);
++	spin_lock_init(&a->amp_lock);
++	a->hp_raw = -1;
++	a->hp_last = -1;
++	a->hp_reported = -1;
+ 	hrtimer_setup(&a->timer, r36s_audio_poll, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+ 	a->snd = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(a->snd))
+@@ -511,6 +585,26 @@ static int r36s_audio_probe(struct platform_device *pdev)
+ 	a->hp = devm_gpiod_get_optional(dev, "hp-detect", GPIOD_IN);
+ 	if (IS_ERR(a->hp))
+ 		return dev_err_probe(dev, PTR_ERR(a->hp), "hp-detect-gpios (L15)\n");
++	if (a->hp) {
++		u32 level;
++
++		/* X7 Game: polarity from the device tree, then automatic switching */
++		if (!device_property_read_u32(dev, "x7,hp-plugged-level", &level) && level <= 1)
++			a->hp_plugged = level;
++		a->jack = devm_input_allocate_device(dev);
++		if (!a->jack)
++			return -ENOMEM;
++		a->jack->name = "R36S headphone jack";
++		a->jack->phys = "nzeus-r36s-audio/jack";
++		a->jack->id.bustype = BUS_HOST;
++		input_set_capability(a->jack, EV_SW, SW_HEADPHONE_INSERT);
++		ret = input_register_device(a->jack);
++		if (ret)
++			return ret;
++		ret = devm_delayed_work_autocancel(dev, &a->hp_work, hp_poll);
++		if (ret)
++			return ret;
++	}
+ 	ret = dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
+ 	if (ret)
+ 		return ret;
+@@ -531,6 +625,8 @@ static int r36s_audio_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 	platform_set_drvdata(pdev, a);
++	if (a->hp)
++		schedule_delayed_work(&a->hp_work, msecs_to_jiffies(HP_POLL_MS));
+ 	dev_info(dev, "sound card R36S ready (nothing set up until the first playback)\n");
+ 	return 0;
+ }

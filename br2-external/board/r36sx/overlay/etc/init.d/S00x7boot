@@ -1,0 +1,23 @@
+#!/bin/sh
+# X7 Game: mount the SD card's FAT32 partition (TF1, /dev/mmcblk0p1, the one a
+# PC shows) at /boot and collect the settings: /etc/x7game.conf (defaults),
+# then x7game/x7game.cfg from the card (simple KEY=VALUE lines only).
+case "$1" in
+start)
+	cp /etc/x7game.conf /run/x7game.conf
+	if mount -t vfat -o rw,noatime,flush,utf8,umask=022 /dev/mmcblk0p1 /boot 2>/dev/null; then
+		mkdir -p /boot/x7game/logs 2>/dev/null
+		if test -f /boot/x7game/x7game.cfg; then
+			tr -d '\r' < /boot/x7game/x7game.cfg |
+				grep -E '^[a-z_]+=[A-Za-z0-9_.-]*$' >> /run/x7game.conf
+		fi
+	else
+		echo "X7 Game: could not mount the SD card's FAT32 partition (/dev/mmcblk0p1)"
+	fi
+	;;
+stop)
+	sync
+	umount /boot 2>/dev/null
+	;;
+esac
+exit 0

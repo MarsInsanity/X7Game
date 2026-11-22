@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sat, 21 Nov 2026 20:43:08 -0800
+Subject: [PATCH] fbdev: hc16xx-gma: take the screen over at probe for the
+ framebuffer console (X7 Game)
+
+With the device-tree property x7,activate-at-probe the firmware layer is taken over before the framebuffer console attaches, pixels start opaque black and console blanking no longer hands the screen back to the firmware logo. Drop the !FRAMEBUFFER_CONSOLE dependency.
+---
+ drivers/video/fbdev/Kconfig         |  5 ++--
+ drivers/video/fbdev/hc16xx-gma-fb.c | 37 ++++++++++++++++++++++++++---
+ 2 files changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index 0ef331834..fb319ec53 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -1808,8 +1808,9 @@ source "drivers/video/fbdev/core/Kconfig"
+ config FB_HC16XX_GMA_FIRMWARE
+     bool "Experimental E3100 firmware-timed GMA framebuffer"
+     depends on FB=y && MACH_HICHIP
+-    depends on !FRAMEBUFFER_CONSOLE
+     select FB_DMAMEM_HELPERS
+     help
+       Fixed 640x480 ARGB8888 scanout using firmware-initialized panel timing.
+-      Built-in diagnostic only. No display activation until explicit unblank.
++      Without the "x7,activate-at-probe" device-tree property there is no
++      display activation until an explicit unblank. With it, the layer is
++      taken over at probe so the framebuffer console is visible.
+diff --git a/drivers/video/fbdev/hc16xx-gma-fb.c b/drivers/video/fbdev/hc16xx-gma-fb.c
+index e695b6cc5..5e4212033 100644
+--- a/drivers/video/fbdev/hc16xx-gma-fb.c
++++ b/drivers/video/fbdev/hc16xx-gma-fb.c
+@@ -65,6 +65,7 @@ struct hc_gma {
+ 	struct delayed_work watch;	/* AVP blank recovery, only while active */
+ 	unsigned int recoveries, failures;
+ 	unsigned int bpp;		/* 32 (ARGB8888, default) or 16 (RGB565) */
++	bool keep_active;		/* X7 Game: own the screen from probe, ignore blanking */
+ };
+ 
+ /* Keep the hardware descriptor independent of compiler bitfield layout. */
+@@ -204,6 +205,10 @@ static int hc_blank(int blank, struct fb_info *info)
+ 	if (blank != FB_BLANK_UNBLANK && blank != FB_BLANK_NORMAL &&
+ 	    blank != FB_BLANK_POWERDOWN)
+ 		return -EINVAL;
++	/* X7 Game: there is no stock system to hand the screen back to, so
++	 * console blanking must not bring the firmware's logo layer back. */
++	if (g->keep_active && blank != FB_BLANK_UNBLANK)
++		return 0;
+ 	mutex_lock(&g->lock);
+ 	if (blank != FB_BLANK_UNBLANK) {
+ 		if (g->active) {
+@@ -225,8 +230,14 @@ static int hc_blank(int blank, struct fb_info *info)
+ 	g->saved_alpha = readl(g->regs + GMA_ALPHA);
+ 	if ((g->saved_ctl != 0 && g->saved_ctl != (BIT(18) | BIT(0))) ||
+ 	    g->saved_dmba != 0x0af92a80 || g->saved_alpha != 0xff) {
+-		ret = -EBUSY; /* Only take over the audited factory logo layer. */
+-		goto out;
++		if (!g->keep_active) {
++			ret = -EBUSY; /* Only take over the audited factory logo layer. */
++			goto out;
++		}
++		/* X7 Game owns the whole console (no stock system, no AVP): other
++		 * bootloader revisions may leave a different logo layer. */
++		dev_warn(g->dev, "firmware layer ctl=%08x dmba=%08x alpha=%08x differs from the audited V2.7 layer; taking it over anyway\n",
++			 g->saved_ctl, g->saved_dmba, g->saved_alpha);
+ 	}
+ 	ret = hc_enable_ours(g);
+ 	if (ret) {
+@@ -386,13 +397,33 @@ static int hc_probe(struct platform_device *pdev)
+ 	ret = fb_alloc_cmap(&info->cmap, 16, 0);
+ 	if (ret)
+ 		goto fail_dma;
++	/*
++	 * X7 Game: take the screen over now, before the framebuffer console
++	 * attaches, so the boot log and the console are visible. The pixels
++	 * start opaque black (alpha 255): ARGB8888 is drawn with per-pixel alpha.
++	 */
++	g->keep_active = of_property_read_bool(pdev->dev.of_node, "x7,activate-at-probe");
++	if (g->keep_active) {
++		u32 *px = g->pixels;
++		unsigned int i;
++
++		for (i = 0; i < WIDTH * HEIGHT; i++)
++			px[i] = 0xff000000;
++		ret = hc_blank(FB_BLANK_UNBLANK, info);
++		if (ret)
++			dev_err(g->dev, "could not take over the screen at probe (%d)\n", ret);
++	}
+ 	ret = register_framebuffer(info);
+ 	if (ret) {
+ 		fb_dealloc_cmap(&info->cmap);
+ 		goto fail_dma;
+ 	}
+ 	platform_set_drvdata(pdev, info);
+-	dev_info(g->dev, "fb%d ready, 640x480 ARGB8888, native CSC, INACTIVE until explicit unblank\n", info->node);
++	if (g->keep_active)
++		dev_info(g->dev, "fb%d ready, 640x480 ARGB8888, native CSC, %s\n", info->node,
++			 g->active ? "showing (X7 Game)" : "NOT showing: take-over failed");
++	else
++		dev_info(g->dev, "fb%d ready, 640x480 ARGB8888, native CSC, INACTIVE until explicit unblank\n", info->node);
+ 	return 0;
+ fail_dma:
+ 	if (g->header)

@@ -1,0 +1,8 @@
+#!/bin/sh
+# X7 Game: the USB serial shell on the OTG port. The gadget (and with it
+# /dev/ttyGS0 for the shell in /etc/inittab) is made now; if the USB
+# controller is not ready yet, x7-usb-gadget waits for it in the background.
+case "$1" in
+start) /usr/sbin/x7-usb-gadget ;;
+esac
+exit 0

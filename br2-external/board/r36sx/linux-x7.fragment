@@ -1,0 +1,44 @@
+# X7 Game changes on top of linux.config (NZEUS Deck's public kernel config,
+# linux-port/kernel-public/kernel.config at nzeus-deck 43ce9f30).
+# Buildroot merges this fragment, then runs olddefconfig.
+# scripts/check-kernel-config.sh fails the build if any of these is dropped.
+
+CONFIG_LOCALVERSION="-x7game"
+# CONFIG_LOCALVERSION_AUTO is not set
+CONFIG_DEFAULT_HOSTNAME="x7game"
+
+# Root is a squashfs on the SD card (blkdevparts=), no initramfs.
+CONFIG_INITRAMFS_SOURCE=""
+# CONFIG_BLK_DEV_INITRD is not set
+CONFIG_CMDLINE_PARTITION=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZLIB=y
+
+# The console on the screen (framebuffer console on the GMA framebuffer).
+CONFIG_FB_HC16XX_GMA_FIRMWARE=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+CONFIG_FONTS=y
+CONFIG_FONT_8x16=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_PRINTK_TIME=y
+
+# Buttons, power, sound, battery.
+CONFIG_INPUT_EVDEV=y
+CONFIG_KEYBOARD_GPIO_POLLED=y
+CONFIG_KEYBOARD_GPIO_SERIALIZER=y
+CONFIG_NZEUS_R36S_POWER=y
+CONFIG_NZEUS_R36S_AUDIO=y
+CONFIG_NZEUS_R36S_RAM=y
+
+# USB serial shell on the OTG port (configfs ACM gadget).
+CONFIG_USB_GADGET=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_ACM=y
+
+# Cards in TF2 / USB storage: FAT32 and exFAT.
+CONFIG_VFAT_FS=y
+CONFIG_EXFAT_FS=y
+CONFIG_EXFAT_DEFAULT_IOCHARSET="utf8"
+CONFIG_NLS_UTF8=y

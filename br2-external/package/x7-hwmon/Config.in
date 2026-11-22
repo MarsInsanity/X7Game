@@ -1,0 +1,7 @@
+config BR2_PACKAGE_X7_HWMON
+	bool "x7-hwmon"
+	help
+	  X7 Game hardware monitor: prints every button press, the
+	  headphone jack, the DC (charger) and OTG ports, the battery
+	  percentage and TF2 cards on the console. Also x7-tf2-probe,
+	  a read-only tool to find TF2's card-detect wiring.

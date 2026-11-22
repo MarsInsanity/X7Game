@@ -1,0 +1,343 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * X7 Game - R36SX / R36S V2.6 / V2.7 (HiChip E3100, board HC16E3100V20).
+ *
+ * The board description appended to OUR kernel (the factory bootloader keeps
+ * using the stock cubegm/Bubbles.scr for itself). Based on NZEUS Deck's
+ * linux-port/kernel-public/board.dts (GPL, https://github.com/nzeuslab/nzeus-deck),
+ * which documents every pin below with hardware evidence. X7 Game changes:
+ *   - no serial console: L12 is both the UART0 TX line and the Vol- button,
+ *     so Vol- is an ordinary key from the start;
+ *   - gamepad key codes (BTN_*), no auto-repeat;
+ *   - headphone detection polarity (x7,hp-plugged-level) for automatic
+ *     speaker/headphone switching;
+ *   - the framebuffer takes the screen over at boot (x7,activate-at-probe)
+ *     for the framebuffer console;
+ *   - bootargs are filled in by mkx7boot.py (@BOOTARGS@) from the SD layout.
+ *
+ * GPIO flags: 0 = active high, 1 = active low, 7 = open drain, active low.
+ * Key codes (include/uapi/linux/input-event-codes.h):
+ *   BTN_SOUTH 0x130 BTN_EAST 0x131 BTN_NORTH 0x133 BTN_WEST 0x134
+ *   BTN_TL 0x136 BTN_TR 0x137 BTN_TL2 0x138 BTN_TR2 0x139
+ *   BTN_SELECT 0x13a BTN_START 0x13b BTN_MODE 0x13c
+ *   BTN_DPAD_UP 0x220 DOWN 0x221 LEFT 0x222 RIGHT 0x223
+ *   KEY_VOLUMEDOWN 0x72 KEY_VOLUMEUP 0x73
+ */
+/dts-v1/;
+
+/ {
+	/* "nzeus,r36s-e3100" is required by the framebuffer driver */
+	compatible = "x7game,r36sx", "nzeus,r36s-e3100", "hichip,hc16xx";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	model = "X7 Game R36SX (HiChip E3100)";
+
+	hosc: external-clock {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mips,mips74Kc";
+			reg = <0>;
+			clocks = <&clk 0x0a>;
+			clock-names = "cpu";
+		};
+	};
+
+	cpuintc: interrupt-controller {
+		compatible = "mti,cpu-interrupt-controller";
+		interrupt-controller;
+		#address-cells = <0>;
+		#interrupt-cells = <1>;
+	};
+
+	intc: intc@18800020 {
+		compatible = "hichip,hc16xx-intc";
+		reg = <0x18800020 0x24>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <3 2>;
+	};
+
+	clk: clock-controller@18800060 {
+		compatible = "hichip,hc16xx-clk";
+		reg = <0x18800060 0x20>;
+		clocks = <&hosc>;
+		clock-names = "hosc";
+		#clock-cells = <1>;
+	};
+
+	rst: reset-controller@18800080 {
+		compatible = "hichip,hc16xx-reset";
+		reg = <0x18800080 0x08>;
+		#reset-cells = <1>;
+	};
+
+	timer@4 {
+		compatible = "hichip,hc16xx-timer";
+		reg = <0x18818a40 0x10>;
+		interrupt-parent = <&intc>;
+		interrupts = <0x16>;
+		clocks = <&clk 0x2e>;
+		clock-names = "counting";
+		status = "disabled";
+	};
+
+	pinctrl: pin-controller@188004a0 {
+		compatible = "hichip,hc16xx-pinctrl";
+		reg = <0x188004a0 0x100>;
+
+		pins_bl: pins-bl {
+			function = "pwm0";
+			pins = "l00";
+			drive-strength = <1>;
+		};
+
+		pins_sdmmc: pins-sdmmc {
+			function = "sdmmc";
+			pins = "t00", "t01", "t02", "t03", "t04", "t05";
+			drive-strength = <16>;
+		};
+	};
+
+	pwm: pwm@18818410 {
+		compatible = "hichip,hc16xx-pwm";
+		reg = <0x18818410 0x24>;
+		clocks = <&clk 0x19>;
+		#pwm-cells = <3>;
+		status = "disabled";
+	};
+
+	gpio: gpio-controller@18800044 {
+		compatible = "hichip,hc16xx-gpio";
+		reg = <0x18800044 0x1c>, <0x188000c4 0x1c>, <0x188000e4 0x1c>, <0x18800344 0x1c>;
+		reg-names = "left", "bottom", "right", "top";
+		gpio-ranges = <&pinctrl 0 0 0x80>;
+		interrupts = <0>;
+		interrupt-parent = <&intc>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		status = "okay";
+	};
+
+	/* TF1: the boot card (mmcblk0). The bootloader leaves its pins set up. */
+	mmc@1884c000 {
+		compatible = "snps,dw-mshc";
+		reg = <0x1884c000 0x2000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		interrupts = <0x0a>;
+		interrupt-parent = <&intc>;
+		clocks = <&clk 0x1d>, <&clk 0x0c>;
+		clock-names = "biu", "ciu";
+		status = "okay";
+		pinctrl-0 = <&pins_sdmmc>;
+		pinctrl-names = "nzeus-bootloader-pins-kept";
+		bus-width = <4>;
+		no-1-8-v;
+		max-frequency = <20000000>;
+		broken-cd;
+		card-detect-delay = <200>;
+	};
+
+	/* UART0: its TX pin L12 is the Vol- button, so it stays off. */
+	serial@18818300 {
+		compatible = "ns16550a";
+		reg = <0x18818300 0x100>;
+		reg-io-width = <1>;
+		reg-shift = <0>;
+		fifo-size = <16>;
+		interrupt-parent = <&intc>;
+		interrupts = <0x10>;
+		clocks = <&clk 0x29>;
+		clock-names = "baud";
+		resets = <&rst 0x10>;
+		clock-frequency = <1843200>;
+		current-speed = <19200>;
+		status = "disabled";
+	};
+
+	/* The OTG USB-C port (USB serial shell). */
+	usb@18844000 {
+		compatible = "hichip,hc16xx-musb";
+		reg = <0x18844000 0x1000>;
+		interrupt-parent = <&intc>;
+		interrupts = <0x35 0x34>;
+		interrupt-names = "mc", "dma";
+		clocks = <&clk 0x4a>;
+		resets = <&rst 0x1c>;
+		phys = <&usbphy0>;
+		dr_mode = "otg";
+		status = "okay";
+	};
+
+	usb@18850000 {
+		compatible = "hichip,hc16xx-musb";
+		reg = <0x18850000 0x1000>;
+		interrupt-parent = <&intc>;
+		interrupts = <0x33 0x32>;
+		interrupt-names = "mc", "dma";
+		clocks = <&clk 0x4b>;
+		resets = <&rst 0x3d>;
+		phys = <&usbphy1>;
+		dr_mode = "peripheral";
+		status = "disabled";
+	};
+
+	usbphy0: phy@18845000 {
+		compatible = "hichip,hc16xx-usb-phy";
+		reg = <0x18845000 0x24>;
+		#phy-cells = <0>;
+	};
+
+	usbphy1: phy@18845100 {
+		compatible = "hichip,hc16xx-usb-phy";
+		reg = <0x18845100 0x24>;
+		#phy-cells = <0>;
+	};
+
+	chosen {
+		bootargs = "@BOOTARGS@";
+	};
+
+	/* Lower 128 MiB only (the upper half mirrors it); the AVP area is
+	 * reserved and released by nzeus-ram once the AVP is proven off. */
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x02f91e50>, <0x030bf000 0x04f41000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		avp_area: avp-area@30bf000 {
+			reg = <0x030bf000 0x04f41000>;
+		};
+	};
+
+	avp-free-ram {
+		compatible = "nzeus,r36s-avp-free-ram";
+		memory-region = <&avp_area>;
+	};
+
+	/* Face buttons, D-pad, L1/R1, Select/Start: the 12-bit shift register. */
+	serializer-keys {
+		compatible = "gpio-serializer-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-gpios = <&gpio 0x08 1>;
+		data-gpios = <&gpio 0x09 7>;
+		num-clocks = <12>;
+		poll-interval = <16>;
+		status = "okay";
+
+		key-l1     { reg = <0x00>; label = "L1";     linux,code = <0x136>; };
+		key-x      { reg = <0x01>; label = "X";      linux,code = <0x133>; };
+		key-y      { reg = <0x02>; label = "Y";      linux,code = <0x134>; };
+		key-r1     { reg = <0x03>; label = "R1";     linux,code = <0x137>; };
+		key-b      { reg = <0x04>; label = "B";      linux,code = <0x130>; };
+		key-a      { reg = <0x05>; label = "A";      linux,code = <0x131>; };
+		key-select { reg = <0x06>; label = "SELECT"; linux,code = <0x13a>; };
+		key-start  { reg = <0x07>; label = "START";  linux,code = <0x13b>; };
+		key-up     { reg = <0x08>; label = "UP";     linux,code = <0x220>; };
+		key-down   { reg = <0x09>; label = "DOWN";   linux,code = <0x221>; };
+		key-left   { reg = <0x0a>; label = "LEFT";   linux,code = <0x222>; };
+		key-right  { reg = <0x0b>; label = "RIGHT";  linux,code = <0x223>; };
+	};
+
+	/* Buttons on their own pins (all active low, polled). */
+	r36s-keys {
+		compatible = "gpio-keys-polled";
+		poll-interval = <20>;
+
+		key-l2 {
+			label = "L2";
+			linux,code = <0x138>;
+			gpios = <&gpio 0x07 1>;
+		};
+
+		key-r2 {
+			label = "R2";
+			linux,code = <0x139>;
+			gpios = <&gpio 0x0b 1>;
+		};
+
+		key-volup {
+			label = "VOL+";
+			linux,code = <0x73>;
+			gpios = <&gpio 0x0d 1>;
+		};
+
+		key-voldown {
+			label = "VOL-";
+			linux,code = <0x72>;
+			gpios = <&gpio 0x0c 1>;
+		};
+
+		key-fn {
+			label = "FN";
+			linux,code = <0x13c>;
+			gpios = <&gpio 0x02 1>;
+		};
+	};
+
+	backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm 0 20000 0>;
+		pinctrl-0 = <&pins_bl>;
+		pinctrl-names = "default";
+		brightness-levels = <0 10 20 30 40 50 60 70 80 90 100>;
+		default-brightness-level = <0>;
+		status = "disabled";
+	};
+
+	framebuffer@1883a000 {
+		compatible = "nzeus,hc16xx-gma-firmware-fb";
+		reg = <0x1883a000 0x1000>;
+		nzeus,firmware-timing;
+		x7,activate-at-probe;
+		status = "okay";
+	};
+
+	avp-rpc@18800800 {
+		compatible = "nzeus,hc16xx-avp-rpc-poll";
+		reg = <0x18800800 0x20>, <0x18800820 0x20>, <0x18800840 0x20>, <0x18800860 0x20>,
+		      <0x18800880 0x20>, <0x188008a0 0x20>, <0x188008c0 0x20>, <0x188008e0 0x20>,
+		      <0x18866800 0x20>, <0x18866820 0x20>, <0x18866840 0x20>, <0x18866860 0x20>,
+		      <0x18866880 0x20>, <0x188668a0 0x20>, <0x188668c0 0x20>, <0x188668e0 0x20>,
+		      <0x18800040 0x04>;
+		status = "okay";
+	};
+
+	/* Battery + DC charger (SAR ADC), power button L14, power-off L01, restart. */
+	power@188184d0 {
+		compatible = "nzeus,r36s-power";
+		reg = <0x188184d0 0x08>;
+		power-gpios = <&gpio 0x0e 1>;
+		poweroff-gpios = <&gpio 0x01 1>;
+		nzeus,restart-watchdog = <0x18818500>;
+	};
+
+	/* Speaker amp L19 (high = off), headphone detect L15. */
+	audio@1880a000 {
+		compatible = "nzeus,r36s-audio";
+		reg = <0x1880a000 0x100>;
+		mute-gpios = <&gpio 0x13 0>;
+		hp-detect-gpios = <&gpio 0x0f 0>;
+		/* raw L15 level that means "headphones plugged in" (unverified
+		 * default; override with headphone_plugged_level in x7game.cfg) */
+		x7,hp-plugged-level = <0>;
+	};
+};

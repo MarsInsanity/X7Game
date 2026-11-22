@@ -1,0 +1,51 @@
+#!/bin/sh
+# X7 Game: make the OTG port a USB serial port (CDC ACM) for a root shell.
+#
+# configfs gadget "x7game": VID 1d6b / PID 0104, device class EF/02/01 (with
+# the interface association, Windows 10/11's built-in usbser driver claims it
+# as one COM port - no driver to install). Same setup as ShallotsOS's USB
+# debug shell. The shell itself runs on /dev/ttyGS0 (see /etc/inittab).
+# On the PC: PuTTY -> Connection type "Serial", the new COM port, any speed.
+G=/sys/kernel/config/usb_gadget/x7game
+mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config || exit 1
+test -d /sys/kernel/config/usb_gadget || { echo "x7-usb-gadget: no USB gadget support"; exit 1; }
+
+if ! test -d "$G"; then
+	mkdir -p "$G" || exit 1
+	echo 0x1d6b > "$G/idVendor"
+	echo 0x0104 > "$G/idProduct"
+	echo 0x0100 > "$G/bcdDevice"
+	echo 0x0200 > "$G/bcdUSB"
+	echo 0xEF > "$G/bDeviceClass"
+	echo 0x02 > "$G/bDeviceSubClass"
+	echo 0x01 > "$G/bDeviceProtocol"
+	mkdir -p "$G/strings/0x409"
+	echo "X7GAME-R36SX" > "$G/strings/0x409/serialnumber"
+	echo "X7 Game" > "$G/strings/0x409/manufacturer"
+	echo "X7 Game USB serial shell" > "$G/strings/0x409/product"
+	mkdir -p "$G/configs/c.1/strings/0x409"
+	echo "Serial shell" > "$G/configs/c.1/strings/0x409/configuration"
+	echo 120 > "$G/configs/c.1/MaxPower"
+	mkdir -p "$G/functions/acm.GS0"
+	ln -s "$G/functions/acm.GS0" "$G/configs/c.1/acm.GS0"
+fi
+
+test -n "$(cat "$G/UDC" 2>/dev/null)" && exit 0
+# Plug the gadget into the board's USB device controller (the OTG port,
+# 18844000.usb). Normally it is already there; otherwise wait for it in the
+# background so the start-up goes on.
+bind() {
+	udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+	test -n "$udc" && echo "$udc" > "$G/UDC"
+}
+bind && exit 0
+(
+	i=0
+	while test $i -lt 30; do
+		sleep 1
+		bind && exit 0
+		i=$((i + 1))
+	done
+	echo "<4>x7-usb-gadget: no USB device controller appeared" > /dev/kmsg
+) > /dev/null 2>&1 &
+exit 0

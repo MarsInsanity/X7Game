@@ -1,0 +1,13 @@
+#!/bin/sh
+# X7 Game: play test tones (speaker, or headphones when they are plugged in:
+# the kernel switches automatically).
+#   x7-soundtest          left, right, then both channels
+#   x7-soundtest SECONDS  a 440 Hz tone on both channels
+if test -n "$1"; then
+	exec timeout "$1" speaker-test -D default -c 2 -r 48000 -t sine -f 440
+fi
+echo "X7 Game sound test: left, right, then both channels"
+speaker-test -D default -c 2 -r 48000 -t sine -f 440 -s 1
+speaker-test -D default -c 2 -r 48000 -t sine -f 660 -s 2
+timeout 2 speaker-test -D default -c 2 -r 48000 -t sine -f 880 > /dev/null 2>&1
+echo "done"

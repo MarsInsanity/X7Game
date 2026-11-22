@@ -1,0 +1,25 @@
+# /etc/inittab - X7 Game (BusyBox init; runlevels are ignored)
+#
+# The root file system is a read-only squashfs. /tmp, /run and /dev/shm are
+# RAM (fstab); /dev is devtmpfs (mounted by the kernel).
+
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mkdir -p /dev/pts /dev/shm
+::sysinit:/bin/mount -a
+::sysinit:/bin/hostname -F /etc/hostname
+::sysinit:/etc/init.d/rcS
+
+# The console on the screen: system state, "Welcome to X7 Game!", then
+# every hardware event (x7-hwmon).
+tty1::respawn:/usr/bin/x7-console
+
+# A root shell on the USB cable (OTG port -> PuTTY, Serial, any speed).
+ttyGS0::respawn:/sbin/getty -L -n -l /usr/libexec/x7-autologin 115200 ttyGS0 vt100
+
+::ctrlaltdel:/sbin/reboot
+
+# Stopping: services first (S00x7boot unmounts the SD card), then everything
+# read-only.
+::shutdown:/etc/init.d/rcK
+::shutdown:/bin/sync
+::shutdown:/bin/umount -a -r

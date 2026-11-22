@@ -1,0 +1,2 @@
+X7 Game @VERSION@
+https://github.com/MarsInsanity/X7Game

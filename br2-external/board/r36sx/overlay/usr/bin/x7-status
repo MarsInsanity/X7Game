@@ -1,0 +1,3 @@
+#!/bin/sh
+# X7 Game: print the hardware state once (same lines as the screen console).
+exec /usr/bin/x7-hwmon --status
