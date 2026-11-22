@@ -203,6 +203,7 @@ The first build takes about an hour (it builds the toolchain).
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
 | `br2-external/package/x7-hwmon/` | the console's hardware monitor, the TF2 probe and `x7-datapart` (data partition table entry) |
 | `docs/HARDWARE.md` | what is known about the hardware and where it comes from |
+| `docs/BENCHMARKS.md` | measured graphics performance (`x7-bench3d`): screen fill, software 3D, sprites |
 
 ## Credits and licences
 
