@@ -83,7 +83,24 @@ def assemble(cross, source, address, tmp, name):
     return (tmp / f'{name}.bin').read_bytes()
 
 
-def kernel_image(vmlinux, dtb, cross, tmp):
+def kernel_symbols(vmlinux, cross, system_map):
+    """Kernel symbol addresses from nm, or from System.map if nm finds none."""
+    symbols = {}
+    for line in run(f'{cross}nm', '-n', vmlinux).splitlines():
+        parts = line.split()
+        if len(parts) == 3:
+            symbols[parts[2]] = int(parts[0], 16)
+    if 'kernel_entry' not in symbols and system_map and system_map.exists():
+        for line in system_map.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 3:
+                symbols[parts[2]] = int(parts[0], 16)
+    for name in ('kernel_entry', '__appended_dtb', '__bss_start'):
+        assert name in symbols, f'kernel symbol {name} not found (no symbols in vmlinux or System.map?)'
+    return symbols
+
+
+def kernel_image(vmlinux, dtb, cross, tmp, system_map=None):
     elf = vmlinux.read_bytes()
     assert elf[:7] == b'\x7fELF\x01\x01\x01', 'not a 32-bit little-endian ELF'
     h = struct.unpack_from('<HHIIIIIHHHHHH', elf, 16)
@@ -95,11 +112,7 @@ def kernel_image(vmlinux, dtb, cross, tmp):
     _, offset, address, physical, size, memsize, _, _ = loads[0]
     assert address == physical == LOAD, f'kernel loads at {address:#x}, expected {LOAD:#x}'
     raw = elf[offset:offset + size]
-    symbols = {}
-    for line in run(f'{cross}nm', '-n', vmlinux).splitlines():
-        parts = line.split()
-        if len(parts) == 3:
-            symbols[parts[2]] = int(parts[0], 16)
+    symbols = kernel_symbols(vmlinux, cross, system_map)
     assert symbols['kernel_entry'] == entry, 'ELF entry is not kernel_entry'
     assert symbols['__appended_dtb'] == address + size, \
         'the raw image does not end at __appended_dtb (CONFIG_MIPS_RAW_APPENDED_DTB?)'
@@ -195,6 +208,7 @@ def wrap(plain, key, tag):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--vmlinux', type=Path, required=True)
+    ap.add_argument('--system-map', type=Path, help='System.map (fallback if vmlinux has no symbols)')
     ap.add_argument('--dts', type=Path, required=True)
     ap.add_argument('--bootargs', required=True)
     ap.add_argument('--cross', required=True, help='cross tool prefix, e.g. .../mipsel-buildroot-linux-gnu-')
@@ -217,7 +231,7 @@ def main():
         subprocess.run([a.dtc, '-q', '-I', 'dts', '-O', 'dtb', '-o', tmp / 'board.dtb', tmp / 'board.dts'],
                        check=True)
         dtb = (tmp / 'board.dtb').read_bytes()
-        kernel, info = kernel_image(a.vmlinux, dtb, a.cross, tmp)
+        kernel, info = kernel_image(a.vmlinux, dtb, a.cross, tmp, a.system_map)
         avp = avp_stand_in(a.cross, tmp)
     (a.out / 'x7game.dtb').write_bytes(dtb)
     (a.out / 'kernel.uImage').write_bytes(kernel)

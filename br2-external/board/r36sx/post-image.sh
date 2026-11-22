@@ -36,7 +36,9 @@ key_args=()
 if [ -n "${X7_V27_KEY:-}" ]; then
 	key_args=(--v27-key "$X7_V27_KEY")
 fi
-python3 "$BOARD/mkx7boot.py" --vmlinux "$OUT/vmlinux" --dts "$BOARD/x7game-r36sx.dts" \
+SYSMAP=$(ls "$BUILD_DIR"/linux-custom/System.map 2>/dev/null | head -n 1)
+python3 "$BOARD/mkx7boot.py" --vmlinux "$OUT/vmlinux" ${SYSMAP:+--system-map "$SYSMAP"} \
+	--dts "$BOARD/x7game-r36sx.dts" \
 	--bootargs "$BOOTARGS" --cross "$CROSS" --dtc "$HOST_DIR/bin/dtc" \
 	--out "$OUT/boot-files" "${key_args[@]}"
 
