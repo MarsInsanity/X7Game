@@ -15,6 +15,9 @@ This drive (X7GAME) is the console's boot partition:
 The X7 Game system itself sits on the card after this partition (Windows
 doesn't show it). Don't format, shrink or move this partition.
 
+Your files go on the second drive, X7DATA (made at the first start): roms\,
+bios\, saves\, music\, videos\, photos\ ... - see README.txt there.
+
 USB shell: connect the console's OTG port to a PC. Windows 10/11 shows a new
 "USB Serial Device (COMx)". In PuTTY choose Connection type "Serial", that
 COM port, any speed, Flow control "None" (Connection > Serial), click Open,

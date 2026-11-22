@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Assemble the X7 Game SD card image.
 
-  mkdisk.py --fat boot.vfat --root rootfs.squashfs --fat-mib 48 --root-mib 24 --out x7game.img
+  mkdisk.py --fat boot.vfat --root rootfs.squashfs --fat-mib 48 --root-mib 975 --out x7game.img
 
 Layout (MiB):
   0 .. 1                    partition table (a normal MBR - the factory
@@ -10,10 +10,14 @@ Layout (MiB):
                             install guide formats them on a PC)
   1 .. 1+FAT                partition 1, FAT32 "X7GAME": the files the
                             bootloader loads (cubegm/) and x7game/ (settings,
-                            logs). The only partition a PC sees.
+                            logs).
   1+FAT .. 1+FAT+ROOT       the root file system (squashfs), NOT in the
                             partition table; the kernel finds it through
-                            blkdevparts= on its command line.
+                            blkdevparts= on its command line. Only the used
+                            part is in the image file (rounded up to 1 MiB).
+  1+FAT+ROOT .. end of card the data partition (exFAT "X7DATA"), not in the
+                            image: X7 Game makes it at the first start and
+                            adds it to the partition table as partition 2.
 """
 import argparse
 import hashlib
@@ -64,7 +68,7 @@ def main():
     mbr[446:462] = entry
     mbr[510:512] = b'\x55\xaa'
 
-    image = bytearray(root_start + root_size)
+    image = bytearray(root_start + (len(root) + MIB - 1) // MIB * MIB)
     image[0:SECTOR] = mbr
     image[fat_start:fat_start + fat_size] = fat
     image[root_start:root_start + len(root)] = root

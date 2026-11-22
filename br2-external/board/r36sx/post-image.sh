@@ -16,10 +16,17 @@ OUT=$BINARIES_DIR
 VERSION=${X7_VERSION:-dev}
 
 # ---- SD card layout (MiB); the kernel command line must match ----
+#   0 ..    1  partition table
+#   1 ..   49  partition 1: FAT32 "X7GAME" (boot files, settings, logs)
+#  49 .. 1024  the root file system (squashfs, hidden; room to grow)
+# 1024 .. end  the data partition "X7DATA", made at the first start
+#              (S05x7data, x7-datapart). Its start must never move: a
+#              re-flashed card keeps its data partition.
 FAT_MIB=48
-ROOT_MIB=24
+DATA_START_MIB=1024
+ROOT_MIB=$((DATA_START_MIB - 1 - FAT_MIB))
 BOOTARGS="console=tty0 root=/dev/mmcblk0p2 rootfstype=squashfs ro rootwait"
-BOOTARGS+=" blkdevparts=mmcblk0:${FAT_MIB}M@1M(x7boot),${ROOT_MIB}M(x7root)"
+BOOTARGS+=" blkdevparts=mmcblk0:${FAT_MIB}M@1M(x7boot),${ROOT_MIB}M(x7root),-(x7data)"
 BOOTARGS+=" panic=0 clk_ignore_unused nzclk=900 consoleblank=0 loglevel=5"
 BOOTARGS+=" vt.global_cursor_default=0"
 

@@ -1,0 +1,110 @@
+#!/bin/sh
+# X7 Game: the data partition "X7DATA" - ROMs, BIOS files, saves, music,
+# videos, photos - mounted at /share. A PC shows it as a second drive.
+#
+# It covers the card from 1 GiB to the end (/dev/mmcblk0p3 through
+# blkdevparts=; partition 2 in the partition table for PCs). At the first
+# start it doesn't exist yet: it is formatted (exFAT, or FAT32 with
+# data_filesystem=fat32 in x7game.cfg) and added to the partition table.
+# A card that already has one - also after flashing a newer X7 Game image,
+# which rewrites only the first part of the card - keeps it: the file system
+# is adopted and only its partition table entry is restored. Never formats a
+# partition that holds a file system.
+DEV=/dev/mmcblk0
+PART=/dev/mmcblk0p3
+START=2097152			# 1 GiB in 512-byte sectors (post-image.sh DATA_START_MIB)
+MNT=/share
+STATE=/run/x7-data.state
+FOLDERS=/usr/share/x7game/data-folders.txt
+
+say() {
+	echo "X7 Game: $*"
+	echo "$*" > "$STATE"
+}
+
+case "$1" in
+start)
+	. /run/x7game.conf 2>/dev/null
+	test -b "$PART" || { say "no data area on this card ($PART missing)"; exit 0; }
+	probe=$(/usr/sbin/x7-datapart probe "$DEV" "$START") || { say "could not read the card"; exit 0; }
+	eval "$probe"
+	if test "$too_small" = 1; then
+		say "the card is too small for a data partition (needs more than 1.1 GB)"
+		exit 0
+	fi
+	if test "$entry1" != ok; then
+		say "unexpected partition table: data partition left alone"
+		exit 0
+	fi
+	if test "$entry2" = other; then
+		say "partition 2 is already something else: data partition left alone"
+		exit 0
+	fi
+	gib=$((data_sectors / 2097152))
+	# Format only a card that has neither a partition 2 nor any file system
+	# there. A partition 2 whose file system we don't recognise (damaged, or
+	# reformatted on a PC) is somebody's data: leave it alone.
+	if test "$fs" = none && test "$entry2" = ours; then
+		say "partition 2 exists but holds no exFAT/FAT32 file system: left alone (format it on a PC as exFAT, or delete it to let X7 Game make a new one)"
+		exit 0
+	fi
+	if test "$fs" = ntfs; then
+		say "the data partition is NTFS, which X7 Game can't use: left alone (reformat it as exFAT on a PC)"
+		exit 0
+	fi
+	case "$fs" in
+	none)
+		if test "${data_filesystem:-exfat}" = fat32; then
+			say "first start: creating the data partition X7DATA (FAT32, $gib GiB)..."
+			mkfs.fat -F 32 -n X7DATA -h "$START" "$PART" > /dev/null 2>&1 && fs=fat32 && ptype=0c
+		else
+			say "first start: creating the data partition X7DATA (exFAT, $gib GiB)..."
+			mkfs.exfat -L X7DATA "$PART" > /dev/null 2>&1 && fs=exfat && ptype=07
+		fi
+		if test "$fs" = none; then
+			say "formatting the data partition failed"
+			exit 0
+		fi
+		/usr/sbin/x7-datapart write-entry "$DEV" "$START" "$ptype" > /dev/null ||
+			echo "X7 Game: the data partition works, but a PC won't see it (partition table not updated)"
+		echo "<5>x7game: data partition created ($fs, $gib GiB)" > /dev/kmsg
+		created=1
+		;;
+	*)
+		if test "$entry2" = absent; then
+			ptype=07
+			test "$fs" = fat32 && ptype=0c
+			if /usr/sbin/x7-datapart write-entry "$DEV" "$START" "$ptype" > /dev/null; then
+				echo "X7 Game: kept the data partition already on this card (partition table entry restored)"
+				echo "<5>x7game: existing data partition adopted ($fs)" > /dev/kmsg
+			fi
+		fi
+		;;
+	esac
+	if test "$fs" = exfat; then
+		mount -t exfat -o rw,noatime,iocharset=utf8,dmask=0022,fmask=0022 "$PART" "$MNT" 2>/dev/null
+	else
+		mount -t vfat -o rw,noatime,utf8,umask=022,flush "$PART" "$MNT" 2>/dev/null
+	fi
+	if ! mountpoint -q "$MNT"; then
+		say "could not mount the data partition ($fs)"
+		exit 0
+	fi
+	# the folder layout (RecalBox names); existing folders are left alone
+	while read -r d; do
+		case "$d" in ''|\#*) continue ;; esac
+		test -d "$MNT/$d" || mkdir -p "$MNT/$d"
+	done < "$FOLDERS"
+	test -f "$MNT/README.txt" || cp /usr/share/x7game/data-README.txt "$MNT/README.txt"
+	if test -n "$created"; then
+		say "X7DATA created ($fs, $gib GiB), mounted at $MNT"
+	else
+		echo "X7DATA ($fs) mounted at $MNT" > "$STATE"
+	fi
+	;;
+stop)
+	sync
+	umount "$MNT" 2>/dev/null
+	;;
+esac
+exit 0

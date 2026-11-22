@@ -1,0 +1,53 @@
+# Folders X7 Game keeps on the data partition (X7DATA, mounted at /share).
+# Missing ones are created at every start; nothing is ever deleted.
+# Names follow RecalBox's "share" layout (folder names from RecalBox's
+# package/recalbox-romfs2/systems/*/system.ini, roms.folder = %ROOT%/<name>).
+bios
+saves
+screenshots
+music
+videos
+photos
+overlays
+shaders
+system
+userscripts
+# One folder per system; a starting set for what this console can run.
+roms/atari2600
+roms/atari7800
+roms/lynx
+roms/nes
+roms/fds
+roms/snes
+roms/gb
+roms/gbc
+roms/gba
+roms/pokemini
+roms/gw
+roms/mastersystem
+roms/gamegear
+roms/sg1000
+roms/megadrive
+roms/segacd
+roms/sega32x
+roms/pcengine
+roms/pcenginecd
+roms/supergrafx
+roms/ngp
+roms/ngpc
+roms/wswan
+roms/wswanc
+roms/psx
+roms/neogeo
+roms/mame
+roms/fbneo
+roms/colecovision
+roms/msx1
+roms/msx2
+roms/vectrex
+roms/zxspectrum
+roms/amstradcpc
+roms/c64
+roms/dos
+roms/scummvm
+roms/pico8

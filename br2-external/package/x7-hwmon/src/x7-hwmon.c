@@ -40,6 +40,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
 #include <time.h>
@@ -658,6 +659,36 @@ static void map_mshc(void)
 
 /* ---------------------------------------------------------------- status */
 
+/* the data partition (X7DATA at /share, made by /etc/init.d/S05x7data) */
+static void data_status(void)
+{
+	char line[512], fstype[32] = "", state[256], total[32], avail[32];
+	struct statvfs st;
+	FILE *f = fopen("/proc/mounts", "re");
+
+	if (f) {
+		while (fgets(line, sizeof(line), f)) {
+			char dev[128], dir[128], type[32];
+
+			if (sscanf(line, "%127s %127s %31s", dev, dir, type) == 3 && !strcmp(dir, "/share")) {
+				snprintf(fstype, sizeof(fstype), "%s", type);
+				break;
+			}
+		}
+		fclose(f);
+	}
+	if (fstype[0] && statvfs("/share", &st) == 0) {
+		format_size((unsigned long long)st.f_blocks * st.f_frsize, total, sizeof(total));
+		format_size((unsigned long long)st.f_bavail * st.f_frsize, avail, sizeof(avail));
+		say(C_TF2, "Data: X7DATA (%s) at /share, %s, %s free - your ROMs, saves and media",
+		    fstype, total, avail);
+	} else if (!read_file("/run/x7-data.state", state, sizeof(state))) {
+		say(C_TF2, "Data: %s", state);
+	} else {
+		say(C_TF2, "Data: no data partition");
+	}
+}
+
 static void status_lines(void)
 {
 	char buf[256], release[96] = "X7 Game", path[256];
@@ -694,6 +725,7 @@ static void status_lines(void)
 		format_size((unsigned long long)read_long(path, 0) * 512ULL, buf, sizeof(buf));
 		say(C_TF2, "TF1: X7 Game system card, %s", buf);
 	}
+	data_status();
 	tf2_tick(1);
 	battery_tick(1);
 	dc_tick(1);

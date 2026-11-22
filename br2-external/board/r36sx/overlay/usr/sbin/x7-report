@@ -13,6 +13,12 @@ for f in /sys/kernel/config/usb_gadget/x7game2/UDC /sys/class/udc/*/state /run/x
 done
 ls -l /dev/ttyGS0 2>&1
 echo
+echo "== data partition =="
+cat /run/x7-data.state 2>/dev/null
+/usr/sbin/x7-datapart probe /dev/mmcblk0 2097152 2>&1
+grep " /share \| /boot " /proc/mounts
+df -h /share /boot 2>/dev/null
+echo
 echo "== processes =="
 ps
 if test "$1" = session; then

@@ -3,7 +3,7 @@
 set -e
 TARGET=$1
 
-mkdir -p "$TARGET/boot" "$TARGET/root"
+mkdir -p "$TARGET/boot" "$TARGET/root" "$TARGET/share"
 chmod 0755 "$TARGET"/etc/init.d/S*x7* "$TARGET"/usr/bin/x7-* \
 	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/libexec/x7-usb-shell"
 

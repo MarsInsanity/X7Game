@@ -21,7 +21,8 @@ retro-gaming frontend comes next.
 | | |
 |---|---|
 | Boot | Linux 7.2 + BusyBox from the SD card (TF1), read-only squashfs root, no initramfs. Target: under 10 s to the console |
-| Image | one `.img` of 73 MiB (FAT32 boot partition + root file system) |
+| Image | one `.img` of about 54 MiB (FAT32 boot partition + root file system) |
+| Data partition | made at the first start on the rest of the card: **X7DATA** (exFAT), a second drive on a PC, for ROMs, BIOS files, saves, music, videos and photos (RecalBox folder names). Flashing a newer image keeps it |
 | Console | the boot log, the hardware state, **"Welcome to X7 Game!"**, then a line for every hardware event |
 | Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER, each press and release is printed. The analog sticks are wired to the D-pad and face buttons |
 | Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console; the panel timing is the one the bootloader sets up. `x7-colortest` shows colour ramps |
@@ -43,15 +44,45 @@ retro-gaming frontend comes next.
 
 1. Download `x7game-r36sx-<version>.img.zip` (or `.img.xz`) from the
    [releases](../../releases) and unzip it.
-2. Write the `.img` to a microSD card (any size) with
+2. Write the `.img` to a microSD card (2 GB or bigger) with
    [balenaEtcher](https://etcher.balena.io/) or [Rufus](https://rufus.ie/).
    This erases the card, so don't use your stock card. Keep the stock card as
    your way back.
 3. Put the card in the **TF1** slot and switch the console on.
 
-The card then shows up on a PC as a small drive called **X7GAME**:
-`x7game/x7game.cfg` holds the settings (battery cutoffs, headphone polarity,
-start volume) and `x7game/logs/boot.log` the log of the last start.
+The first start takes a few seconds longer: X7 Game turns the rest of the card
+into the data partition (see below).
+
+On a PC the card then shows two drives:
+
+- **X7GAME** (48 MB): the boot files. `x7game/x7game.cfg` holds the settings
+  (battery cutoffs, headphone polarity, start volume, data partition file
+  system) and `x7game/logs/` the logs of the last start (`boot.log`) and of the
+  last session (`last-session.log`, written when you switch off with POWER).
+- **X7DATA** (the rest of the card): your files.
+
+## Data partition (X7DATA)
+
+| Folder | What |
+|---|---|
+| `roms/<system>/` | games, one folder per system, named like RecalBox: `nes`, `snes`, `gb`, `gbc`, `gba`, `megadrive`, `mastersystem`, `gamegear`, `pcengine`, `psx`, `neogeo`, `mame`, `fbneo`, ... (list: [data-folders.txt](br2-external/board/r36sx/overlay/usr/share/x7game/data-folders.txt)) |
+| `bios/` | BIOS files some systems need |
+| `saves/` | game saves and save states |
+| `screenshots/` | screenshots |
+| `music/`, `videos/`, `photos/` | media |
+| `overlays/`, `shaders/`, `system/`, `userscripts/` | for the frontend and emulators (later) |
+
+- It is exFAT (no 4 GB file limit; Windows, macOS and Linux read it). Set
+  `data_filesystem=fat32` in `x7game.cfg` **before the first start** for
+  FAT32 instead.
+- On the console it is mounted at `/share`.
+- Missing folders are created again at every start; nothing in it is ever
+  deleted.
+- **Updating keeps your data:** flashing a newer X7 Game image (balenaEtcher,
+  or Rufus in image mode) rewrites only the first part of the card. The next
+  start finds X7DATA where it was and only restores its partition table
+  entry, it never formats a partition that holds a file system. Back up
+  anyway before re-flashing.
 
 ## USB serial shell
 
@@ -123,10 +154,10 @@ The first build takes about an hour (it builds the toolchain).
 | `br2-external/board/r36sx/linux.config`, `linux-x7.fragment` | kernel configuration |
 | `br2-external/board/r36sx/x7game-r36sx.dts` | the board description appended to the kernel |
 | `br2-external/board/r36sx/mkx7boot.py` | builds the boot files the factory bootloader loads |
-| `br2-external/board/r36sx/mkdisk.py`, `post-image.sh` | build the SD card image |
+| `br2-external/board/r36sx/mkdisk.py`, `post-image.sh` | build the SD card image (card layout in `post-image.sh`) |
 | `br2-external/board/r36sx/overlay/` | the system's own files (init scripts, USB shell) |
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
-| `br2-external/package/x7-hwmon/` | the console's hardware monitor and the TF2 probe |
+| `br2-external/package/x7-hwmon/` | the console's hardware monitor, the TF2 probe and `x7-datapart` (data partition table entry) |
 | `docs/HARDWARE.md` | what is known about the hardware and where it comes from |
 
 ## Credits and licences
