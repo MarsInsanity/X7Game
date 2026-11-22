@@ -8,7 +8,9 @@
 # --- CPU ---
 BR2_mipsel=y
 BR2_mips_32r2=y
-# hard float, FP mode xx (works with FR=0 and FR=1 kernels)
+# hard float (the 74Kc has an FPU; the kernel runs it at 900 MHz, where it is
+# reliable), FP mode xx (works with FR=0 and FR=1 kernels)
+# BR2_MIPS_SOFT_FLOAT is not set
 BR2_MIPS_FP32_MODE_XX=y
 # Buildroot has no 74Kc entry: MIPS32r2, tuned for the 74K pipeline
 BR2_TARGET_OPTIMIZATION="-mtune=74kc"
