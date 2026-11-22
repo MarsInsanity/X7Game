@@ -1,10 +1,12 @@
 # Graphics performance (measured)
 
 Measured on the developer's R36SX (v2.7 hardware, V2.6 bootloader) with X7
-Game 0.3.1, `x7-bench3d` (source:
-[x7-bench3d.c](../br2-external/package/x7-hwmon/src/x7-bench3d.c)),
-2026-11-22. The console has **no 3D GPU**: all 3D below is software
-rendering on the CPU (MIPS 74Kc, one core, 900 MHz, hardware FPU).
+Game 0.3.1 and its `x7-bench3d` tool, 2026-11-22. The tool was removed from
+the system afterwards; its source is kept in the history:
+[x7-bench3d.c at 06d62fa](https://github.com/MarsInsanity/X7Game/blob/06d62faeaa1e2c3818f7ce83e32ff6a3553317f9/br2-external/package/x7-hwmon/src/x7-bench3d.c)
+(build it with `-lm`; the 0.3.1 release image still contains it). The
+console has **no 3D GPU**: all 3D below is software rendering on the CPU
+(MIPS 74Kc, one core, 900 MHz, hardware FPU).
 
 ## 1. Filling the whole 640x480 screen
 

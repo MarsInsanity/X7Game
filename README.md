@@ -145,7 +145,7 @@ tail -f /run/x7-events.log   the console's event lines, live
 x7-soundtest                 test tones (speaker or headphones)
 x7-colortest                 colour ramps on the screen
 x7-tf2-probe                 read-only helper to find TF2's wiring
-x7-bench3d                   3D speed test on the screen (~1 min), saved to X7DATA
+x7-update --status           running system slot and versions
 poweroff                     switch the console off
 ```
 
@@ -203,7 +203,7 @@ The first build takes about an hour (it builds the toolchain).
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
 | `br2-external/package/x7-hwmon/` | the console's hardware monitor, the TF2 probe and `x7-datapart` (data partition table entry) |
 | `docs/HARDWARE.md` | what is known about the hardware and where it comes from |
-| `docs/BENCHMARKS.md` | measured graphics performance (`x7-bench3d`): screen fill, software 3D, sprites |
+| `docs/BENCHMARKS.md` | measured graphics performance: screen fill, software 3D, sprites |
 
 ## Credits and licences
 
