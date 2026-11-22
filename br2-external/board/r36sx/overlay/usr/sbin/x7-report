@@ -8,7 +8,7 @@ uname -a
 echo "uptime: $(cut -d' ' -f1 /proc/uptime) s"
 echo
 echo "== USB serial shell =="
-for f in /sys/kernel/config/usb_gadget/x7game/UDC /sys/class/udc/*/state /run/x7-usb-shell.state; do
+for f in /sys/kernel/config/usb_gadget/x7game2/UDC /sys/class/udc/*/state /run/x7-usb-shell.state; do
 	test -e "$f" && echo "$f: $(cat "$f" 2>/dev/null)"
 done
 ls -l /dev/ttyGS0 2>&1

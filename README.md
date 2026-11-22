@@ -141,8 +141,9 @@ are under **GPL-2.0**, like the Linux kernel. X7 Game builds directly on:
   charger and power button, AVP memory release, USB, AVP mailbox), the CPU
   timer and clock patches, the kernel configuration, the board description,
   the boot container and entry shim, the AVP stand-in, the V2.7 boot-file
-  wrapper and the power-on picture format, plus the hardware findings
-  behind all of them.
+  wrapper, the power-on picture format and the USB serial shell (gadget
+  descriptor and shell launcher), plus the hardware findings behind all of
+  them.
 - **[linux-hichip](https://github.com/SiarheiVolkau/linux-hichip)** by
   Siarhei Volkau, GPL-2.0: the HiChip HC16xx Linux kernel (branch
   `hc16xx-7.2`, commit `da5f1a22`).
@@ -161,8 +162,8 @@ Hardware research used (no code copied):
   board-file analysis and evidence that stock cards may carry a second
   partition.
 - **[ShallotsOS](https://github.com/MarsInsanity/ShallotsOS)** (CC BY-NC-SA
-  4.0): the USB serial shell setup (configfs ACM with IAD class codes for
-  Windows' built-in driver).
+  4.0): the idea and PC-side workflow of the USB serial shell (configfs ACM
+  gadget, PuTTY on Windows' built-in driver).
 
 **Stock board files:** `br2-external/board/r36sx/stock/` holds the console
 manufacturer's own board description files (`Bubbles.scr`, `dtb.bin`) from

@@ -1,12 +1,15 @@
 #!/bin/sh
 # X7 Game: make the OTG port a USB serial port (CDC ACM) for a root shell.
 #
-# configfs gadget "x7game": VID 1d6b / PID 0104, device class EF/02/01 (with
-# the interface association, Windows 10/11's built-in usbser driver claims it
-# as one COM port - no driver to install). Same setup as ShallotsOS's USB
-# debug shell. The shell itself runs on /dev/ttyGS0 (see /etc/inittab).
-# On the PC: PuTTY -> Connection type "Serial", the new COM port, any speed.
-G=/sys/kernel/config/usb_gadget/x7game
+# configfs gadget "x7game2": VID 1d6b / PID 0104, device class 02 (CDC) with
+# one ACM function - exactly the descriptor NZEUS Deck's USB rescue port uses
+# on this kernel and USB driver, which Windows 10/11 opens as a COM port with
+# its built-in usbser driver (no driver to install). v0.1.0 used ShallotsOS's
+# EF/02/01 "composite" form; Windows put usbccgp in between and PuTTY hung
+# opening the port, so this is the proven form. The shell itself runs on
+# /dev/ttyGS0 (see /etc/inittab).
+# On the PC: PuTTY -> Serial, the new COM port, any speed, flow control None.
+G=/sys/kernel/config/usb_gadget/x7game2
 mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config || exit 1
 test -d /sys/kernel/config/usb_gadget || { echo "x7-usb-gadget: no USB gadget support"; exit 1; }
 
@@ -16,18 +19,16 @@ if ! test -d "$G"; then
 	echo 0x0104 > "$G/idProduct"
 	echo 0x0100 > "$G/bcdDevice"
 	echo 0x0200 > "$G/bcdUSB"
-	echo 0xEF > "$G/bDeviceClass"
-	echo 0x02 > "$G/bDeviceSubClass"
-	echo 0x01 > "$G/bDeviceProtocol"
+	echo 0x02 > "$G/bDeviceClass"
 	mkdir -p "$G/strings/0x409"
-	echo "X7GAME-R36SX" > "$G/strings/0x409/serialnumber"
+	echo "X7GAME-R36SX-2" > "$G/strings/0x409/serialnumber"
 	echo "X7 Game" > "$G/strings/0x409/manufacturer"
 	echo "X7 Game USB serial shell" > "$G/strings/0x409/product"
 	mkdir -p "$G/configs/c.1/strings/0x409"
 	echo "Serial shell" > "$G/configs/c.1/strings/0x409/configuration"
-	echo 120 > "$G/configs/c.1/MaxPower"
-	mkdir -p "$G/functions/acm.GS0"
-	ln -s "$G/functions/acm.GS0" "$G/configs/c.1/acm.GS0"
+	echo 250 > "$G/configs/c.1/MaxPower"
+	mkdir -p "$G/functions/acm.usb0"
+	ln -s "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0"
 fi
 
 test -n "$(cat "$G/UDC" 2>/dev/null)" && exit 0
@@ -38,7 +39,7 @@ bind() {
 	udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
 	test -n "$udc" || return 1
 	if echo "$udc" > "$G/UDC"; then
-		echo "<5>x7-usb-gadget: USB serial (acm.GS0 -> /dev/ttyGS0) bound to $udc" > /dev/kmsg
+		echo "<5>x7-usb-gadget: USB serial (acm.usb0 -> /dev/ttyGS0) bound to $udc" > /dev/kmsg
 		return 0
 	fi
 	echo "<4>x7-usb-gadget: could not bind to $udc" > /dev/kmsg
