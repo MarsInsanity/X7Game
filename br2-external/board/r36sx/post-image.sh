@@ -25,7 +25,9 @@ BOOTARGS+=" vt.global_cursor_default=0"
 
 gcc=$(ls "$HOST_DIR"/bin/mipsel-*-linux-gnu-gcc | head -n 1)
 CROSS=${gcc%gcc}
-MKFS=$(ls "$HOST_DIR"/sbin/mkfs.fat "$HOST_DIR"/sbin/mkfs.vfat 2>/dev/null | head -n 1)
+MKFS=$(ls "$HOST_DIR"/sbin/mkfs.fat "$HOST_DIR"/bin/mkfs.fat "$HOST_DIR"/sbin/mkfs.vfat \
+	"$HOST_DIR"/bin/mkfs.vfat 2>/dev/null | head -n 1)
+[ -n "$MKFS" ] || { echo "mkfs.fat not found in $HOST_DIR (host-dosfstools)"; exit 1; }
 MCOPY=$HOST_DIR/bin/mcopy
 export MTOOLS_SKIP_CHECK=1
 

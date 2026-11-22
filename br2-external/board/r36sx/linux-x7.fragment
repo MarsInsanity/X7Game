@@ -7,8 +7,8 @@ CONFIG_LOCALVERSION="-x7game"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_DEFAULT_HOSTNAME="x7game"
 
-# Root is a squashfs on the SD card (blkdevparts=), no initramfs.
-CONFIG_INITRAMFS_SOURCE=""
+# Root is a squashfs on the SD card (blkdevparts=), no initramfs (this also
+# drops NZEUS's CONFIG_INITRAMFS_SOURCE).
 # CONFIG_BLK_DEV_INITRD is not set
 CONFIG_CMDLINE_PARTITION=y
 CONFIG_SQUASHFS=y
