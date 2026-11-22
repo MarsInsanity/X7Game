@@ -62,13 +62,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential bc bison flex cpio \
             rsync unzip file wget python3 git xz-utils zip libssl-dev libncurses-dev
 
-      - name: Cache Buildroot downloads and ccache
-        uses: actions/cache@v4
+      # restored here, saved at the end even when the build fails, so a retry
+      # does not rebuild the toolchain from scratch
+      - name: Restore Buildroot downloads and ccache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.buildroot-dl
             ~/.buildroot-ccache
-          key: br-${{ env.BR_VERSION }}-${{ hashFiles('br2-external/configs/*', 'br2-external/board/r36sx/linux*', 'br2-external/board/r36sx/patches/**') }}
+          key: br-${{ env.BR_VERSION }}-${{ github.run_id }}
           restore-keys: |
             br-${{ env.BR_VERSION }}-
 
@@ -80,6 +82,15 @@ jobs:
           export BR2_DL_DIR=~/.buildroot-dl
           scripts/build.sh "$GITHUB_WORKSPACE/output" 2>&1 | tee build.log
           exit "${PIPESTATUS[0]}"
+
+      - name: Save Buildroot downloads and ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: br-${{ env.BR_VERSION }}-${{ github.run_id }}
 
       - name: Package
         id: pkg
