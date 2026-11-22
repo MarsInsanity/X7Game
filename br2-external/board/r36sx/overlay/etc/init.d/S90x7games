@@ -1,0 +1,16 @@
+#!/bin/sh
+# X7 Game: at power-off, ask a running game to quit before the data
+# partition is unmounted, so the emulator writes the game's save first
+# (RetroArch and PCSX4All save when they get SIGTERM). Waits up to 5 s.
+test "$1" = stop || exit 0
+EMUS="retroarch pcsx4all"
+pids=$(pidof $EMUS)
+test -n "$pids" || exit 0
+kill -TERM $pids 2>/dev/null
+i=0
+while test $i -lt 50 && pidof $EMUS > /dev/null; do
+	usleep 100000
+	i=$((i + 1))
+done
+sync
+exit 0

@@ -1,0 +1,9 @@
+config BR2_PACKAGE_LIBRETRO_GPSP
+	bool "libretro-gpsp"
+	depends on BR2_PACKAGE_RETROARCH
+	depends on BR2_INSTALL_LIBSTDCPP
+	help
+	  gpSP libretro core: Game Boy Advance, with its MIPS dynamic
+	  recompiler.
+
+	  https://github.com/libretro/gpsp

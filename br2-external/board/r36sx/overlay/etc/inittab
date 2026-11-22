@@ -9,9 +9,16 @@
 ::sysinit:/bin/hostname -F /etc/hostname
 ::sysinit:/etc/init.d/rcS
 
-# The console on the screen: system state, "Welcome to X7 Game!", then
-# every hardware event (x7-hwmon).
-tty1::respawn:/usr/bin/x7-console
+# The hardware monitor (power button, volume keys, charger, headphones, TF2;
+# every event goes to /run/x7-events.log) and the virtual gamepad the
+# emulators use (x7-padd, "X7 Game Gamepad").
+::respawn:/usr/bin/x7-hwmon > /dev/null 2>&1
+::respawn:/usr/sbin/x7-padd > /dev/null 2>> /run/x7-padd.log
+
+# The screen: the temporary game list (x7-browser), which starts the
+# emulators. Its "System information" page shows the hardware state and the
+# latest events (x7-console shows them live, e.g. over the USB shell).
+tty1::respawn:/usr/bin/x7-browser
 
 # A root shell on the USB cable (OTG port -> PuTTY, Serial, any speed, then
 # press Enter).

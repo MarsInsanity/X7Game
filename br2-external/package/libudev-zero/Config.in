@@ -1,0 +1,9 @@
+config BR2_PACKAGE_LIBUDEV_ZERO
+	bool "libudev-zero"
+	depends on !BR2_PACKAGE_HAS_UDEV
+	help
+	  A libudev replacement that works without a udev daemon (it
+	  reads sysfs). RetroArch's udev input drivers use it to find
+	  the "X7 Game Gamepad" virtual pad.
+
+	  https://github.com/illiliti/libudev-zero

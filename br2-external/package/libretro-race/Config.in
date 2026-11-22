@@ -1,0 +1,7 @@
+config BR2_PACKAGE_LIBRETRO_RACE
+	bool "libretro-race"
+	depends on BR2_PACKAGE_RETROARCH
+	help
+	  RACE libretro core: Neo Geo Pocket and Neo Geo Pocket Color.
+
+	  https://github.com/libretro/RACE

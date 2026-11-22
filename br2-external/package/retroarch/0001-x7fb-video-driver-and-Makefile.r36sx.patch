@@ -1,0 +1,896 @@
+diff --git a/Makefile.r36sx b/Makefile.r36sx
+new file mode 100644
+index 0000000..a2a922b
+--- /dev/null
++++ b/Makefile.r36sx
+@@ -0,0 +1,186 @@
++#########################################################################
++## RetroArch for X7 Game on the R36SX (HiChip E3100, MIPS 74Kc, no GPU)
++##
++## A slim build modelled on Makefile.miyoo: RGUI only, no networking,
++## no OpenGL/shaders/overlays/widgets. Video: the x7fb framebuffer driver
++## (gfx/drivers/x7fb_gfx.c, RGB565 on /dev/fb0). Input: udev (libudev-zero,
++## no udev daemon) reading the "X7 Game Gamepad" virtual pad. Audio: ALSA.
++##
++## Cross-compile: make -f Makefile.r36sx CC=... CXX=...
++#########################################################################
++
++CC    ?= gcc
++CXX   ?= g++
++STRIP ?= strip
++
++PACKAGE_NAME = retroarch
++
++DEBUG ?= 0
++
++HAVE_X7FB = 1
++HAVE_SCREENSHOTS = 1
++HAVE_REWIND = 1
++HAVE_7ZIP = 1
++HAVE_AL = 0
++HAVE_ALSA = 1
++HAVE_TINYALSA = 0
++HAVE_DSP_FILTER = 1
++HAVE_VIDEO_FILTER = 0
++HAVE_STATIC_VIDEO_FILTERS = 0
++HAVE_STATIC_AUDIO_FILTERS = 1
++HAVE_FILTERS_BUILTIN = 1
++HAVE_BUILTINMBEDTLS = 0
++HAVE_BUILTINZLIB = 1
++HAVE_C99 = 1
++HAVE_CC = 1
++HAVE_CC_RESAMPLER = 1
++HAVE_CHD = 1
++HAVE_COMMAND = 0
++HAVE_CXX = 1
++HAVE_DR_MP3 = 1
++HAVE_DYNAMIC = 1
++HAVE_EGL = 0
++HAVE_FREETYPE = 0
++HAVE_GDI = 0
++HAVE_GETADDRINFO = 0
++HAVE_GETOPT_LONG = 1
++HAVE_GLSL = 0
++HAVE_HID = 0
++HAVE_IBXM = 1
++HAVE_IMAGEVIEWER = 0
++HAVE_LANGEXTRA = 0
++HAVE_LIBRETRODB = 1
++HAVE_MENU = 1
++HAVE_MENU_COMMON = 1
++HAVE_GFX_WIDGETS = 0
++HAVE_MMAP = 1
++HAVE_NETWORKING = 0
++HAVE_CHEEVOS = 0
++HAVE_DISCORD = 0
++HAVE_TRANSLATE = 0
++HAVE_ACCESSIBILITY = 0
++HAVE_OPENDINGUX_FBDEV = 0
++HAVE_OPENGL = 0
++HAVE_OPENGL1 = 0
++HAVE_OPENGLES = 0
++HAVE_OPENGLES3 = 0
++HAVE_OPENGL_CORE = 0
++HAVE_OPENSSL = 0
++HAVE_OVERLAY = 0
++HAVE_RBMP = 1
++HAVE_RJPEG = 1
++HAVE_RPILED = 0
++HAVE_RPNG = 1
++HAVE_RUNAHEAD = 0
++HAVE_SDL = 0
++HAVE_SDL2 = 0
++HAVE_SDL_DINGUX = 0
++HAVE_SHADERPIPELINE = 0
++HAVE_STB_FONT = 0
++HAVE_STB_IMAGE = 0
++HAVE_STB_VORBIS = 0
++HAVE_STDIN_CMD = 0
++HAVE_STRCASESTR = 1
++HAVE_THREADS = 1
++HAVE_UDEV = 1
++HAVE_RGUI = 1
++HAVE_MATERIALUI = 0
++HAVE_XMB = 0
++HAVE_OZONE = 0
++HAVE_ZLIB = 1
++HAVE_CONFIGFILE = 1
++HAVE_PATCH = 1
++HAVE_XDELTA = 0
++HAVE_CHEATS = 1
++HAVE_LIBSHAKE = 0
++HAVE_CORE_INFO_CACHE = 1
++HAVE_NEAREST_RESAMPLER = 1
++
++UDEV_CFLAGS := -DHAVE_UDEV
++UDEV_LIBS   := -ludev
++ALSA_LIBS   := -lasound
++
++OS = Linux
++TARGET = retroarch
++
++OBJ :=
++LINK := $(CXX)
++DEF_FLAGS := -mtune=74kc -fomit-frame-pointer
++DEF_FLAGS += -ffunction-sections -fdata-sections
++DEF_FLAGS += -I. -Ideps -Ideps/stb -MMD
++DEF_FLAGS += -Wall -Wno-unused-variable
++DEF_FLAGS += -std=gnu99 -D_GNU_SOURCE
++LIBS := -ldl -lrt -pthread
++CFLAGS :=
++CXXFLAGS := -fno-exceptions -fno-rtti -std=c++11 -D__STDC_CONSTANT_MACROS
++ASFLAGS :=
++LDFLAGS := -Wl,--gc-sections
++INCLUDE_DIRS :=
++LIBRARY_DIRS :=
++DEFINES := -DRARCH_INTERNAL -D_FILE_OFFSET_BITS=64 -UHAVE_STATIC_DUMMY
++DEFINES += -DHAVE_C99=1 -DHAVE_CXX=1
++DEFINES += -DHAVE_GETOPT_LONG=1 -DHAVE_STRCASESTR=1 -DHAVE_DYNAMIC=1
++DEFINES += -DHAVE_FILTERS_BUILTIN -DHAVE_ALSA -DHAVE_X7FB
++
++OBJDIR_BASE := obj-unix
++
++ifeq ($(DEBUG), 1)
++   OBJDIR := $(OBJDIR_BASE)/debug
++   DEF_FLAGS += -O0 -g -DDEBUG -D_DEBUG
++else
++   OBJDIR := $(OBJDIR_BASE)/release
++   DEF_FLAGS += -O2 -DNDEBUG
++endif
++
++include Makefile.common
++
++# the X7 Game framebuffer video driver
++OBJ += gfx/drivers/x7fb_gfx.o
++
++DEF_FLAGS += $(INCLUDE_DIRS)
++LDFLAGS += $(CFLAGS) $(CXXFLAGS) $(DEF_FLAGS)
++CFLAGS += $(DEF_FLAGS)
++CXXFLAGS += $(DEF_FLAGS)
++
++HEADERS = $(wildcard */*/*.h) $(wildcard */*.h) $(wildcard *.h)
++
++ifneq ($(V),1)
++        Q := @
++endif
++
++RARCH_OBJ := $(addprefix $(OBJDIR)/,$(OBJ))
++
++all: $(TARGET)
++
++-include $(RARCH_OBJ:.o=.d)
++
++$(TARGET): $(RARCH_OBJ)
++	@$(if $(Q), $(shell echo echo LD $@),)
++	$(Q)$(LINK) -o $@ $(RARCH_OBJ) $(LIBS) $(LDFLAGS) $(LIBRARY_DIRS)
++
++ifeq ($(STRIP_BIN),1)
++	$(STRIP) --strip-unneeded $(TARGET)
++endif
++
++$(OBJDIR)/%.o: %.c
++	@mkdir -p $(dir $@)
++	@$(if $(Q), $(shell echo echo CC $<),)
++	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) $(DEFINES) -c -o $@ $<
++
++$(OBJDIR)/%.o: %.cpp
++	@mkdir -p $(dir $@)
++	@$(if $(Q), $(shell echo echo CXX $<),)
++	$(Q)$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(DEFINES) -MMD -c -o $@ $<
++
++$(OBJDIR)/%.o: %.S $(HEADERS)
++	@mkdir -p $(dir $@)
++	@$(if $(Q), $(shell echo echo AS $<),)
++	$(Q)$(CC) $(CFLAGS) $(ASFLAGS) $(DEFINES) -c -o $@ $<
++
++clean:
++	@$(if $(Q), echo $@,)
++	$(Q)rm -rf $(OBJDIR_BASE)
++	$(Q)rm -f $(TARGET)
++	$(Q)rm -f *.d
++
++.PHONY: all clean
+diff --git a/gfx/drivers/x7fb_gfx.c b/gfx/drivers/x7fb_gfx.c
+new file mode 100644
+index 0000000..ec4e261
+--- /dev/null
++++ b/gfx/drivers/x7fb_gfx.c
+@@ -0,0 +1,660 @@
++/*  RetroArch - A frontend for libretro.
++ *  Copyright (C) 2026 - X7 Game
++ *
++ *  x7fb: video driver for plain Linux framebuffers without a GPU, written
++ *  for the X7 Game OS on the R36SX handheld (HiChip E3100, 640x480 panel,
++ *  uncached framebuffer memory). The screen is driven in RGB565; frames are
++ *  scaled with nearest-neighbour lookup tables into a cached line buffer and
++ *  written to the framebuffer with sequential 32-bit stores, once per frame.
++ *  Duplicate frames are not redrawn. Based on the structure of sdl_rs90_gfx.c.
++ *
++ *  RetroArch is free software: you can redistribute it and/or modify it under the terms
++ *  of the GNU General Public License as published by the Free Software Found-
++ *  ation, either version 3 of the License, or (at your option) any later version.
++ *
++ *  RetroArch is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
++ *  PURPOSE.  See the GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License along with RetroArch.
++ *  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <stdlib.h>
++#include <string.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
++#include <linux/fb.h>
++#include <linux/kd.h>
++
++#include <retro_inline.h>
++#include <retro_miscellaneous.h>
++#include <string/stdstring.h>
++#include <encodings/utf.h>
++#include <features/features_cpu.h>
++
++#ifdef HAVE_CONFIG_H
++#include "../../config.h"
++#endif
++
++#ifdef HAVE_MENU
++#include "../../menu/menu_driver.h"
++#endif
++
++#include "../../verbosity.h"
++#include "../../input/input_driver.h"
++#include "../../gfx/video_driver.h"
++#include "../../gfx/drivers_font_renderer/bitmap.h"
++#include "../../configuration.h"
++#include "../../retroarch.h"
++
++#define likely(x)   __builtin_expect(!!(x), 1)
++#define unlikely(x) __builtin_expect(!!(x), 0)
++
++#define X7FB_MAX_W      640
++#define X7FB_MAX_H      480
++#define X7FB_NUM_GLYPHS 256
++#define X7FB_FONT_SCALE 2
++
++typedef struct x7fb_video
++{
++   retro_time_t last_frame_time;
++   bitmapfont_lut_t *osd_font;
++   uint8_t *fb;                      /* mmapped framebuffer (uncached) */
++   size_t fb_size;
++   int fd;                           /* /dev/fb0 */
++   int tty;                          /* /dev/tty0, for KD_GRAPHICS */
++   unsigned screen_w, screen_h;      /* 640x480 */
++   unsigned line_length;             /* bytes per screen row */
++   unsigned orig_bpp;
++   /* current output rectangle and source size */
++   unsigned src_w, src_h;
++   unsigned out_x, out_y, out_w, out_h;
++   bool src_rgb32;
++   bool rgb32;                       /* core frames are XRGB8888 */
++   bool scale_integer;
++   bool keep_aspect;
++   bool menu_active;
++   bool was_in_menu;
++   bool need_clear;                  /* clear the borders before the next blit */
++   bool quitting;
++   uint16_t xmap[X7FB_MAX_W];        /* output x -> source x */
++   uint16_t ymap[X7FB_MAX_H];        /* output y -> source y */
++   uint32_t line[X7FB_MAX_W / 2];    /* one scaled output row (cached memory) */
++   unsigned menu_w, menu_h;
++   uint16_t menu_texture[X7FB_MAX_W * X7FB_MAX_H];
++} x7fb_video_t;
++
++static INLINE uint16_t x7fb_xrgb8888_to_rgb565(uint32_t p)
++{
++   return (uint16_t)(((p >> 8) & 0xF800) | ((p >> 5) & 0x07E0) | ((p >> 3) & 0x001F));
++}
++
++/* Write one output row (out_w pixels, 2 per 32-bit word) to the screen.
++ * volatile: keep the stores sequential 32-bit stores (no memcpy, which
++ * may prefetch or read on uncached memory). */
++static INLINE void x7fb_put_row(x7fb_video_t *vid, unsigned y,
++      unsigned x, const uint32_t *src, unsigned words)
++{
++   volatile uint32_t *dst = (volatile uint32_t*)(vid->fb +
++         (size_t)y * vid->line_length + x * 2);
++   unsigned i;
++
++   for (i = 0; i < words; i++)
++      dst[i] = src[i];
++}
++
++static void x7fb_clear_screen(x7fb_video_t *vid)
++{
++   unsigned y, i, words = vid->screen_w / 2;
++
++   for (y = 0; y < vid->screen_h; y++)
++   {
++      volatile uint32_t *dst = (volatile uint32_t*)(vid->fb +
++            (size_t)y * vid->line_length);
++      for (i = 0; i < words; i++)
++         dst[i] = 0;
++   }
++}
++
++/* Work out where (and how big) a src_w x src_h image goes on the screen */
++static void x7fb_set_output(x7fb_video_t *vid,
++      unsigned src_w, unsigned src_h, bool rgb32, bool is_menu)
++{
++   unsigned sw = vid->screen_w, sh = vid->screen_h;
++   unsigned out_w, out_h, i;
++
++   if (src_w == 0 || src_h == 0)
++      return;
++
++   if (is_menu)
++   {
++      /* RGUI renders at 320x240 (or smaller): largest integer scale */
++      unsigned s = MIN(sw / src_w, sh / src_h);
++      if (s == 0)
++         s = 1;
++      out_w = MIN(src_w * s, sw);
++      out_h = MIN(src_h * s, sh);
++   }
++   else if (vid->scale_integer && src_w <= sw && src_h <= sh)
++   {
++      unsigned s = MIN(sw / src_w, sh / src_h);
++      out_w = src_w * s;
++      out_h = src_h * s;
++   }
++   else if (vid->keep_aspect)
++   {
++      float aspect = video_driver_get_aspect_ratio();
++
++      if (aspect <= 0.0f)
++         aspect = (float)src_w / (float)src_h;
++
++      if ((float)sw / (float)sh > aspect)
++      {
++         out_h = sh;
++         out_w = (unsigned)((float)sh * aspect + 0.5f);
++      }
++      else
++      {
++         out_w = sw;
++         out_h = (unsigned)((float)sw / aspect + 0.5f);
++      }
++   }
++   else
++   {
++      out_w = sw;
++      out_h = sh;
++   }
++
++   out_w &= ~1u;                     /* whole 32-bit words per row */
++   if (out_w > sw)
++      out_w = sw;
++   if (out_h > sh)
++      out_h = sh;
++   if (out_w < 2)
++      out_w = 2;
++   if (out_h < 1)
++      out_h = 1;
++
++   vid->src_w     = src_w;
++   vid->src_h     = src_h;
++   vid->src_rgb32 = rgb32;
++   vid->out_w     = out_w;
++   vid->out_h     = out_h;
++   vid->out_x     = ((sw - out_w) / 2) & ~1u;
++   vid->out_y     = (sh - out_h) / 2;
++
++   for (i = 0; i < out_w; i++)
++      vid->xmap[i] = (uint16_t)((i * src_w) / out_w);
++   for (i = 0; i < out_h; i++)
++      vid->ymap[i] = (uint16_t)((i * src_h) / out_h);
++
++   vid->need_clear = true;
++}
++
++/* Scale and write one frame (RGB565 or XRGB8888) */
++static void x7fb_blit(x7fb_video_t *vid, const void *frame,
++      unsigned width, unsigned height, unsigned pitch, bool rgb32)
++{
++   uint16_t *line16 = (uint16_t*)vid->line;
++   unsigned words   = vid->out_w / 2;
++   unsigned j;
++   int last_sy      = -1;
++
++   if (unlikely(vid->need_clear))
++   {
++      x7fb_clear_screen(vid);
++      vid->need_clear = false;
++   }
++
++   /* fast path: exact 2x of a 16-bit frame (e.g. 320x240 -> 640x480) */
++   if (!rgb32 && vid->out_w == width * 2 && vid->out_h == height * 2)
++   {
++      unsigned y, x;
++      for (y = 0; y < height; y++)
++      {
++         const uint16_t *src = (const uint16_t*)((const uint8_t*)frame + (size_t)y * pitch);
++         for (x = 0; x < width; x++)
++            vid->line[x] = (uint32_t)src[x] | ((uint32_t)src[x] << 16);
++         x7fb_put_row(vid, vid->out_y + 2 * y,     vid->out_x, vid->line, words);
++         x7fb_put_row(vid, vid->out_y + 2 * y + 1, vid->out_x, vid->line, words);
++      }
++      return;
++   }
++
++   for (j = 0; j < vid->out_h; j++)
++   {
++      unsigned sy = vid->ymap[j];
++
++      if ((int)sy != last_sy)
++      {
++         unsigned i;
++         if (rgb32)
++         {
++            const uint32_t *src = (const uint32_t*)((const uint8_t*)frame + (size_t)sy * pitch);
++            for (i = 0; i < vid->out_w; i++)
++               line16[i] = x7fb_xrgb8888_to_rgb565(src[vid->xmap[i]]);
++         }
++         else
++         {
++            const uint16_t *src = (const uint16_t*)((const uint8_t*)frame + (size_t)sy * pitch);
++            for (i = 0; i < vid->out_w; i++)
++               line16[i] = src[vid->xmap[i]];
++         }
++         last_sy = (int)sy;
++      }
++      x7fb_put_row(vid, vid->out_y + j, vid->out_x, vid->line, words);
++   }
++}
++
++/* one font pixel = a X7FB_FONT_SCALE x X7FB_FONT_SCALE block */
++static INLINE void x7fb_font_px(x7fb_video_t *vid, unsigned x, unsigned y,
++      uint16_t colour)
++{
++   unsigned k, l;
++
++   for (k = 0; k < X7FB_FONT_SCALE; k++)
++   {
++      volatile uint16_t *p = (volatile uint16_t*)(vid->fb +
++            (size_t)(y + k) * vid->line_length) + x;
++      for (l = 0; l < X7FB_FONT_SCALE; l++)
++         p[l] = colour;
++   }
++}
++
++/* On-screen message (fps, notifications): 5x10 bitmap font, doubled,
++ * white with a black shadow, drawn inside the bottom of the image (the
++ * next frame overwrites it). Never reads the framebuffer (uncached). */
++static void x7fb_blit_text(x7fb_video_t *vid, const char *str)
++{
++   bool **font_lut = vid->osd_font->lut;
++   unsigned char_w = FONT_WIDTH_STRIDE * X7FB_FONT_SCALE;
++   unsigned x      = vid->out_x + 8;
++   unsigned y;
++
++   if (vid->out_h < (FONT_HEIGHT + 4) * X7FB_FONT_SCALE + 2)
++      return;
++   y = vid->out_y + vid->out_h - (FONT_HEIGHT + 4) * X7FB_FONT_SCALE;
++
++   while (!string_is_empty(str))
++   {
++      uint32_t symbol;
++      bool *glyph;
++      unsigned gx, gy, pass;
++
++      if (x + char_w + 1 >= vid->out_x + vid->out_w)
++         return;
++      if (*str == ' ')
++      {
++         str++;
++         x += char_w;
++         continue;
++      }
++      symbol = utf8_walk(&str);
++      if (symbol == 339)
++         symbol = 156;
++      if (symbol == 338)
++         symbol = 140;
++      if (symbol >= X7FB_NUM_GLYPHS)
++         continue;
++      glyph = font_lut[symbol];
++
++      for (pass = 0; pass < 2; pass++)       /* 0 = shadow, 1 = text */
++         for (gy = 0; gy < FONT_HEIGHT; gy++)
++            for (gx = 0; gx < FONT_WIDTH; gx++)
++               if (glyph[gx + gy * FONT_WIDTH])
++                  x7fb_font_px(vid,
++                        x + gx * X7FB_FONT_SCALE + (pass ? 0 : 1),
++                        y + gy * X7FB_FONT_SCALE + (pass ? 0 : 1),
++                        pass ? 0xFFFF : 0x0000);
++      x += char_w;
++   }
++}
++
++static void x7fb_gfx_free(void *data)
++{
++   x7fb_video_t *vid = (x7fb_video_t*)data;
++
++   if (!vid)
++      return;
++
++   if (vid->fb && vid->fb != MAP_FAILED)
++   {
++      x7fb_clear_screen(vid);
++      munmap(vid->fb, vid->fb_size);
++   }
++   if (vid->fd >= 0)
++   {
++      struct fb_var_screeninfo var;
++      if (vid->orig_bpp && ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) == 0 &&
++            var.bits_per_pixel != vid->orig_bpp)
++      {
++         var.bits_per_pixel = vid->orig_bpp;
++         ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var);
++      }
++      close(vid->fd);
++   }
++   if (vid->tty >= 0)
++   {
++      ioctl(vid->tty, KDSETMODE, KD_TEXT);
++      close(vid->tty);
++   }
++   if (vid->osd_font)
++      bitmapfont_free_lut(vid->osd_font);
++
++   free(vid);
++}
++
++static void x7fb_input_driver_init(
++      const char *input_drv_name, const char *joypad_drv_name,
++      input_driver_t **input, void **input_data)
++{
++   if (!input || !input_data)
++      return;
++
++   *input      = NULL;
++   *input_data = NULL;
++
++   if (string_is_empty(input_drv_name))
++      return;
++
++#if defined(HAVE_UDEV)
++   if (string_is_equal(input_drv_name, "udev"))
++   {
++      *input_data = input_driver_init_wrap(&input_udev, joypad_drv_name);
++      if (*input_data)
++         *input = &input_udev;
++      return;
++   }
++#endif
++
++#if defined(__linux__)
++   if (string_is_equal(input_drv_name, "linuxraw"))
++   {
++      *input_data = input_driver_init_wrap(&input_linuxraw, joypad_drv_name);
++      if (*input_data)
++         *input = &input_linuxraw;
++      return;
++   }
++#endif
++}
++
++static void *x7fb_gfx_init(const video_info_t *video,
++      input_driver_t **input, void **input_data)
++{
++   struct fb_var_screeninfo var;
++   struct fb_fix_screeninfo fix;
++   settings_t *settings = config_get_ptr();
++   x7fb_video_t *vid    = (x7fb_video_t*)calloc(1, sizeof(*vid));
++
++   if (!vid)
++      return NULL;
++
++   vid->fd  = -1;
++   vid->tty = -1;
++
++   vid->fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
++   if (vid->fd < 0 || ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) < 0)
++   {
++      RARCH_ERR("[x7fb] Cannot open /dev/fb0.\n");
++      goto error;
++   }
++   vid->orig_bpp = var.bits_per_pixel;
++
++   /* the whole screen runs in RGB565: half the bytes to push per frame */
++   if (var.bits_per_pixel != 16)
++   {
++      var.bits_per_pixel = 16;
++      var.activate       = FB_ACTIVATE_NOW;
++      if (ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var) < 0 ||
++            ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) < 0 ||
++            var.bits_per_pixel != 16)
++      {
++         RARCH_ERR("[x7fb] The framebuffer has no 16-bit mode.\n");
++         goto error;
++      }
++   }
++   if (ioctl(vid->fd, FBIOGET_FSCREENINFO, &fix) < 0)
++      goto error;
++
++   vid->screen_w    = MIN(var.xres, X7FB_MAX_W);
++   vid->screen_h    = MIN(var.yres, X7FB_MAX_H);
++   vid->line_length = fix.line_length;
++   vid->fb_size     = fix.smem_len;
++   vid->fb          = (uint8_t*)mmap(NULL, vid->fb_size,
++         PROT_READ | PROT_WRITE, MAP_SHARED, vid->fd, 0);
++   if (vid->fb == MAP_FAILED)
++   {
++      vid->fb = NULL;
++      RARCH_ERR("[x7fb] Cannot map the framebuffer.\n");
++      goto error;
++   }
++
++   /* keep the text console from drawing over the picture */
++   vid->tty = open("/dev/tty0", O_RDWR | O_CLOEXEC);
++   if (vid->tty >= 0)
++      ioctl(vid->tty, KDSETMODE, KD_GRAPHICS);
++
++   vid->rgb32         = video->rgb32;
++   vid->scale_integer = settings->bools.video_scale_integer;
++   /* video_force_aspect: keep the aspect ratio (else stretch) */
++   vid->keep_aspect   = settings->bools.video_force_aspect;
++   vid->menu_w        = 320;
++   vid->menu_h        = 240;
++
++   x7fb_input_driver_init(settings->arrays.input_driver,
++         settings->arrays.input_joypad_driver, input, input_data);
++
++   vid->osd_font = bitmapfont_get_lut();
++   if (!vid->osd_font || vid->osd_font->glyph_max < (X7FB_NUM_GLYPHS - 1))
++   {
++      RARCH_ERR("[x7fb] Cannot initialise the OSD font.\n");
++      goto error;
++   }
++
++   x7fb_set_output(vid, vid->screen_w / 2, vid->screen_h / 2, false, false);
++   RARCH_LOG("[x7fb] %ux%u RGB565 framebuffer, line %u bytes.\n",
++         vid->screen_w, vid->screen_h, vid->line_length);
++   return vid;
++
++error:
++   x7fb_gfx_free(vid);
++   return NULL;
++}
++
++static bool x7fb_gfx_frame(void *data, const void *frame,
++      unsigned width, unsigned height, uint64_t frame_count,
++      unsigned pitch, const char *msg, video_frame_info_t *video_info)
++{
++   x7fb_video_t *vid  = (x7fb_video_t*)data;
++#ifdef HAVE_MENU
++   bool menu_is_alive = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
++#endif
++
++   if (unlikely(!vid))
++      return true;
++
++   /* fast-forward: the panel shows at most 60 frames per second, so
++    * pushing more is wasted work on uncached memory */
++   if (unlikely(video_info->input_driver_nonblock_state))
++   {
++      retro_time_t now = cpu_features_get_time_usec();
++      if (now - vid->last_frame_time < 16667)
++         return true;
++      vid->last_frame_time = now;
++   }
++
++#ifdef HAVE_MENU
++   menu_driver_frame(menu_is_alive, video_info);
++#endif
++
++   if (likely(!vid->menu_active))
++   {
++      if (unlikely(vid->was_in_menu ||
++            width != vid->src_w || height != vid->src_h ||
++            vid->rgb32 != vid->src_rgb32))
++         x7fb_set_output(vid, width, height, vid->rgb32, false);
++      vid->was_in_menu = false;
++
++      /* NULL = the core repeated the previous frame: nothing to do */
++      if (likely(frame))
++         x7fb_blit(vid, frame, width, height, pitch, vid->rgb32);
++   }
++   else
++   {
++      if (!vid->was_in_menu ||
++            vid->src_w != vid->menu_w || vid->src_h != vid->menu_h)
++      {
++         x7fb_set_output(vid, vid->menu_w, vid->menu_h, false, true);
++         vid->was_in_menu = true;
++      }
++      x7fb_blit(vid, vid->menu_texture, vid->menu_w, vid->menu_h,
++            vid->menu_w * sizeof(uint16_t), false);
++   }
++
++   if (msg)
++      x7fb_blit_text(vid, msg);
++
++   return true;
++}
++
++static void x7fb_set_texture_enable(void *data, bool state, bool full_screen)
++{
++   x7fb_video_t *vid = (x7fb_video_t*)data;
++   if (vid)
++      vid->menu_active = state;
++}
++
++static void x7fb_set_texture_frame(void *data, const void *frame, bool rgb32,
++      unsigned width, unsigned height, float alpha)
++{
++   x7fb_video_t *vid = (x7fb_video_t*)data;
++
++   /* RGUI hands over RGB565 (see rgui.c, argb32_to_pixel_platform_format) */
++   if (unlikely(!vid || !frame || rgb32 || width == 0 || height == 0 ||
++         width > X7FB_MAX_W || height > X7FB_MAX_H))
++      return;
++
++   memcpy(vid->menu_texture, frame, width * height * sizeof(uint16_t));
++   vid->menu_w = width;
++   vid->menu_h = height;
++}
++
++static void x7fb_gfx_set_nonblock_state(void *data, bool toggle,
++      bool adaptive_vsync_enabled, unsigned swap_interval)
++{
++   /* no vsync on this framebuffer: audio sync paces RetroArch */
++}
++
++static bool x7fb_gfx_alive(void *data)
++{
++   x7fb_video_t *vid = (x7fb_video_t*)data;
++   return vid && !vid->quitting;
++}
++
++static bool x7fb_gfx_focus(void *data) { return true; }
++static bool x7fb_gfx_suppress_screensaver(void *data, bool enable) { return false; }
++static bool x7fb_gfx_has_windowed(void *data) { return false; }
++
++static void x7fb_gfx_viewport_info(void *data, struct video_viewport *vp)
++{
++   x7fb_video_t *vid = (x7fb_video_t*)data;
++
++   if (!vid)
++      return;
++   vp->x           = vid->out_x;
++   vp->y           = vid->out_y;
++   vp->width       = vid->out_w;
++   vp->height      = vid->out_h;
++   vp->full_width  = vid->screen_w;
++   vp->full_height = vid->screen_h;
++}
++
++static float x7fb_get_refresh_rate(void *data) { return 60.0f; }
++
++static void x7fb_apply_state_changes(void *data)
++{
++   x7fb_video_t *vid    = (x7fb_video_t*)data;
++   settings_t *settings = config_get_ptr();
++
++   if (!vid || !settings)
++      return;
++
++   if (vid->scale_integer != settings->bools.video_scale_integer ||
++         vid->keep_aspect != settings->bools.video_force_aspect)
++   {
++      vid->scale_integer = settings->bools.video_scale_integer;
++      vid->keep_aspect   = settings->bools.video_force_aspect;
++      if (!vid->menu_active)
++         x7fb_set_output(vid, vid->src_w, vid->src_h, vid->src_rgb32, false);
++   }
++}
++
++static uint32_t x7fb_get_flags(void *data) { return 0; }
++
++static const video_poke_interface_t x7fb_poke_interface = {
++   x7fb_get_flags,
++   NULL, /* load_texture */
++   NULL, /* unload_texture */
++   NULL, /* set_video_mode */
++   x7fb_get_refresh_rate,
++   NULL, /* set_filtering */
++   NULL, /* get_video_output_size */
++   NULL, /* get_video_output_prev */
++   NULL, /* get_video_output_next */
++   NULL, /* get_current_framebuffer */
++   NULL, /* get_proc_address */
++   NULL, /* set_aspect_ratio */
++   x7fb_apply_state_changes,
++   x7fb_set_texture_frame,
++   x7fb_set_texture_enable,
++   NULL, /* set_osd_msg */
++   NULL, /* show_mouse */
++   NULL, /* grab_mouse_toggle */
++   NULL, /* get_current_shader */
++   NULL, /* get_current_software_framebuffer */
++   NULL, /* get_hw_render_interface */
++   NULL, /* set_hdr_max_nits */
++   NULL, /* set_hdr_paper_white_nits */
++   NULL, /* set_hdr_contrast */
++   NULL  /* set_hdr_expand_gamut */
++};
++
++static void x7fb_get_poke_interface(void *data, const video_poke_interface_t **iface)
++{
++   *iface = &x7fb_poke_interface;
++}
++
++static bool x7fb_gfx_set_shader(void *data,
++      enum rarch_shader_type type, const char *path)
++{
++   return false;
++}
++
++video_driver_t video_x7fb = {
++   x7fb_gfx_init,
++   x7fb_gfx_frame,
++   x7fb_gfx_set_nonblock_state,
++   x7fb_gfx_alive,
++   x7fb_gfx_focus,
++   x7fb_gfx_suppress_screensaver,
++   x7fb_gfx_has_windowed,
++   x7fb_gfx_set_shader,
++   x7fb_gfx_free,
++   "x7fb",
++   NULL, /* set_viewport */
++   NULL, /* set_rotation */
++   x7fb_gfx_viewport_info,
++   NULL, /* read_viewport */
++   NULL, /* read_frame_raw */
++#ifdef HAVE_OVERLAY
++   NULL, /* get_overlay_interface */
++#endif
++   x7fb_get_poke_interface,
++   NULL, /* wrap_type_to_enum */
++#ifdef HAVE_GFX_WIDGETS
++   NULL  /* gfx_widgets_enabled */
++#endif
++};
+diff --git a/gfx/video_driver.c b/gfx/video_driver.c
+index 7917922..305ae7b 100644
+--- a/gfx/video_driver.c
++++ b/gfx/video_driver.c
+@@ -342,6 +342,9 @@ video_driver_t video_null = {
+ };
+ 
+ const video_driver_t *video_drivers[] = {
++#ifdef HAVE_X7FB
++   &video_x7fb,
++#endif
+ #ifdef HAVE_GCM
+    &video_gcm,
+ #endif
+diff --git a/gfx/video_driver.h b/gfx/video_driver.h
+index ca6434c..ba5114e 100644
+--- a/gfx/video_driver.h
++++ b/gfx/video_driver.h
+@@ -1352,6 +1352,7 @@ extern video_driver_t video_sdl;
+ extern video_driver_t video_sdl2;
+ extern video_driver_t video_sdl_dingux;
+ extern video_driver_t video_sdl_rs90;
++extern video_driver_t video_x7fb;
+ extern video_driver_t video_vg;
+ extern video_driver_t video_omap;
+ extern video_driver_t video_exynos;
+diff --git a/menu/drivers/rgui.c b/menu/drivers/rgui.c
+index ebcd34c..04a1e99 100644
+--- a/menu/drivers/rgui.c
++++ b/menu/drivers/rgui.c
+@@ -1384,6 +1384,7 @@ static bool rgui_set_pixel_format_function(void)
+       argb32_to_pixel_platform_format = argb32_to_bgra4444;
+    else if (   string_is_equal(driver_ident, "sdl_dingux")    /* DINGUX SDL */
+             || string_is_equal(driver_ident, "sdl_rs90")
++            || string_is_equal(driver_ident, "x7fb")              /* X7 Game */
+             || string_is_equal(driver_ident, "xvideo"))
+    {
+       argb32_to_pixel_platform_format = argb32_to_rgb565;

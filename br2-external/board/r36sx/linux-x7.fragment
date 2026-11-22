@@ -26,6 +26,9 @@ CONFIG_PRINTK_TIME=y
 
 # Buttons, power, sound, battery.
 CONFIG_INPUT_EVDEV=y
+# x7-padd joins the two button devices into one virtual gamepad for emulators
+CONFIG_INPUT_MISC=y
+CONFIG_INPUT_UINPUT=y
 CONFIG_KEYBOARD_GPIO_POLLED=y
 CONFIG_KEYBOARD_GPIO_SERIALIZER=y
 CONFIG_NZEUS_R36S_POWER=y

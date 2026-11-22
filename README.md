@@ -7,9 +7,10 @@ RAM). X7 Game replaces the locked-down stock "hOS" (Linux 4.4) with a modern
 card. The console's flash chip is never touched: put the stock card back and
 the console is exactly as it was.
 
-This is the base OS: no frontend yet, just a console on the screen that shows
-what the hardware is doing and ends with **"Welcome to X7 Game!"**. A
-retro-gaming frontend comes next.
+The base OS is done; **emulation is being added now**. Until the real
+frontend arrives, the screen shows a simple text-mode **test game list**
+that browses `X7DATA/roms` and starts each game in its emulator (see
+[Playing games](#playing-games-test-stage)).
 
 > **Status: first builds, not yet tested on hardware.** Everything below is
 > built on code that NZEUS Deck runs on real consoles, but X7 Game's own
@@ -24,8 +25,9 @@ retro-gaming frontend comes next.
 | Image | one `.img` of about 54 MiB (FAT32 boot partition + root file system) |
 | Data partition | made at the first start on the rest of the card: **X7DATA** (exFAT), a second drive on a PC, for ROMs, BIOS files, saves, music, videos and photos (RecalBox folder names). Flashing a newer image keeps it |
 | Updates | copy a `.x7update` file into X7DATA and switch on: installed into the second system slot, verified, then the console restarts into it; data and settings stay, the previous version stays available |
-| Console | the boot log, the hardware state, **"Welcome to X7 Game!"**, then a line for every hardware event |
-| Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER, each press and release is printed. The analog sticks are wired to the D-pad and face buttons |
+| Screen | the boot log, then the test game list (`x7-browser`); its **System information** page shows the hardware state and the latest hardware events |
+| Games | RetroArch (a slim build made for this console) with libretro cores for the 8/16-bit and handheld systems, Game Boy Advance and arcade. PlayStation (PCSX4All) is being ported |
+| Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER; every press and release is logged (`/run/x7-events.log`). The emulators see them as one gamepad, "X7 Game Gamepad". The analog sticks are wired to the D-pad and face buttons |
 | Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console; the panel timing is the one the bootloader sets up. `x7-colortest` shows colour ramps |
 | Sound | ALSA sound card (speaker and headphone jack). `x7-soundtest` plays test tones |
 | Headphones | automatic switching: headphones in = speaker off, headphones out = speaker on, printed on every change |
@@ -85,6 +87,60 @@ On a PC the card then shows two drives:
   partition table entry; it never formats a partition that holds a file
   system. Back up anyway before re-flashing.
 
+## Playing games (test stage)
+
+The game list on the screen is temporary: it exists to test the emulators
+until the real X7 Game frontend is written.
+
+1. On a PC, copy your games into **X7DATA** `roms/<system>/` (folder names
+   below) and any BIOS files into `bios/`. Zipped cartridge games work.
+2. On the console pick a system, then a game, and press **A**.
+
+| Game list | |
+|---|---|
+| D-pad up / down | move |
+| D-pad left / right, L1 / R1 | page up / down |
+| A | open the folder / start the game |
+| B | back |
+| X | start the game with another emulator (systems that have more than one) |
+
+| Folder | System | Emulator | BIOS (in `bios/`) |
+|---|---|---|---|
+| `nes`, `fds` | NES / Famicom, Famicom Disk System | FCEUmm | `disksys.rom` (FDS only) |
+| `snes` | Super Nintendo | Snes9x 2005 | |
+| `gb`, `gbc` | Game Boy, Game Boy Color | Gambatte | |
+| `gba` | Game Boy Advance | gpSP | `gba_bios.bin` (optional, a built-in one is used otherwise) |
+| `mastersystem`, `megadrive`, `gamegear`, `sg1000`, `segacd`, `sega32x` | Sega 8/16-bit, Sega CD, 32X | PicoDrive | `bios_CD_U.bin`, `bios_CD_E.bin`, `bios_CD_J.bin` (Sega CD only) |
+| `pcengine`, `pcenginecd` | PC Engine / TurboGrafx-16 (+ CD) | Beetle PCE Fast | `syscard3.pce` (CD only) |
+| `ngp`, `ngpc` | Neo Geo Pocket (Color) | RACE | |
+| `wswan`, `wswanc` | WonderSwan (Color) | Beetle WonderSwan | |
+| `atari2600` | Atari 2600 | Stella 2014 | |
+| `atari7800` | Atari 7800 | ProSystem | `7800 BIOS (U).rom` (optional) |
+| `lynx` | Atari Lynx | Handy | `lynxboot.img` |
+| `neogeo` | Neo Geo | FB Alpha 2012 Neo Geo | `neogeo.zip` (next to the games) |
+| `fbneo` | Arcade: CPS-1, CPS-2, Neo Geo | FB Alpha 2012 CPS-1 / CPS-2 / Neo Geo (X picks) | FB Alpha 2012 romsets |
+| `psx` | PlayStation | PCSX4All (being ported, not in the build yet) | |
+
+**In a game (RetroArch):** hold **FN** and press
+
+| | | | |
+|---|---|---|---|
+| X | menu | START | quit to the game list |
+| R1 | save state | L1 | load state |
+| D-pad left / right | state slot - / + | R2 | fast forward on / off |
+| Y | screenshot | B | pause |
+| SELECT | reset | | |
+
+VOL+ / VOL- change the volume and POWER switches off (the game's save is
+written first), as everywhere.
+
+Saves and save states go to `saves/<system>/`, screenshots to
+`screenshots/`. RetroArch's settings live in
+`system/retroarch/retroarch.cfg` (changes made in its menu are saved there;
+delete the file to get X7 Game's defaults back). If a game doesn't start, the
+game list shows the error and `system/logs/last-game.log` holds the
+emulator's output.
+
 ## Updating
 
 From X7 Game 0.3 on, updates don't need a PC flashing tool:
@@ -141,7 +197,8 @@ If it doesn't work, switch the console off with POWER and look at
 
 ```
 x7-status                    the hardware state
-tail -f /run/x7-events.log   the console's event lines, live
+x7-console                   the hardware state, then every hardware event, live
+x7-launch fceumm FILE        start a game (emulator name from systems.txt)
 x7-soundtest                 test tones (speaker or headphones)
 x7-colortest                 colour ramps on the screen
 x7-tf2-probe                 read-only helper to find TF2's wiring
@@ -201,7 +258,11 @@ The first build takes about an hour (it builds the toolchain).
 | `br2-external/board/r36sx/mkdisk.py`, `mkupdate.py`, `post-image.sh` | build the SD card image and the update file (card layout in `post-image.sh`) |
 | `br2-external/board/r36sx/overlay/` | the system's own files (init scripts, USB shell) |
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
-| `br2-external/package/x7-hwmon/` | the console's hardware monitor, the TF2 probe and `x7-datapart` (data partition table entry) |
+| `br2-external/package/x7-hwmon/` | the console's hardware monitor, the virtual gamepad (`x7-padd`), the test game list (`x7-browser`), the TF2 probe and `x7-datapart` (data partition table entry) |
+| `br2-external/package/retroarch/` | RetroArch: `Makefile.r36sx` (the slim build) and the `x7fb` video driver, as a patch |
+| `br2-external/package/libretro-*/` | the libretro cores |
+| `br2-external/package/libudev-zero/` | libudev without a udev daemon (RetroArch finds the gamepad with it) |
+| `br2-external/board/r36sx/overlay/usr/share/x7game/` | `systems.txt` (system folders and their emulators), RetroArch's defaults (`retroarch.cfg`, `retroarch-fixed.cfg`) |
 | `docs/HARDWARE.md` | what is known about the hardware and where it comes from |
 | `docs/BENCHMARKS.md` | measured graphics performance: screen fill, software 3D, sprites |
 
@@ -228,12 +289,39 @@ are under **GPL-2.0**, like the Linux kernel. X7 Game builds directly on:
   LGPL-2.1, alsa-lib LGPL-2.1, alsa-utils GPL-2.0, ...); a build writes them
   all to `output/legal-info` with `make legal-info`.
 
+Emulation:
+
+- **[RetroArch](https://github.com/libretro/RetroArch)** 1.22.2 by the
+  libretro team, GPL-3.0-or-later: the frontend for the libretro cores. X7
+  Game builds it with its own `Makefile.r36sx` and adds a framebuffer video
+  driver, `x7fb` (`br2-external/package/retroarch/`).
+- **[libudev-zero](https://github.com/illiliti/libudev-zero)** by illiliti,
+  ISC: libudev without a udev daemon, for RetroArch's input drivers.
+- The libretro cores, each under its own licence. Several allow only
+  non-commercial use (marked *n-c*); X7 Game is free and never sold, and
+  anyone selling a product based on it must leave those cores out.
+
+  | Core | Upstream | Licence |
+  |---|---|---|
+  | FCEUmm | [libretro/libretro-fceumm](https://github.com/libretro/libretro-fceumm) | GPL-2.0-or-later |
+  | Snes9x 2005 | [libretro/snes9x2005](https://github.com/libretro/snes9x2005) | Snes9x licence (*n-c*) |
+  | Gambatte | [libretro/gambatte-libretro](https://github.com/libretro/gambatte-libretro) | GPL-2.0 |
+  | gpSP | [libretro/gpsp](https://github.com/libretro/gpsp) | GPL-2.0-or-later |
+  | PicoDrive | [libretro/picodrive](https://github.com/libretro/picodrive) | PicoDrive licence (*n-c*); its SH2 code MAME licence (*n-c*); libchdr BSD-3-Clause; emu2413 MIT |
+  | Beetle PCE Fast, Beetle WonderSwan (Mednafen) | [libretro/beetle-pce-fast-libretro](https://github.com/libretro/beetle-pce-fast-libretro), [libretro/beetle-wswan-libretro](https://github.com/libretro/beetle-wswan-libretro) | GPL-2.0-or-later |
+  | RACE | [libretro/RACE](https://github.com/libretro/RACE) | GPL-2.0-or-later |
+  | Stella 2014 | [libretro/stella2014-libretro](https://github.com/libretro/stella2014-libretro) | GPL-2.0 |
+  | ProSystem | [libretro/prosystem-libretro](https://github.com/libretro/prosystem-libretro) | GPL-2.0-or-later |
+  | Handy | [libretro/libretro-handy](https://github.com/libretro/libretro-handy) | zlib licence (Blip_Buffer LGPL-2.1-or-later) |
+  | FB Alpha 2012 CPS-1, CPS-2, Neo Geo | [libretro/fbalpha2012_cps1](https://github.com/libretro/fbalpha2012_cps1), [_cps2](https://github.com/libretro/fbalpha2012_cps2), [_neogeo](https://github.com/libretro/fbalpha2012_neogeo) | FB Alpha licence (*n-c*), MAME licence (*n-c*) |
+
 Hardware research used (no code copied):
 
 - **[TreeFrogUI](https://github.com/tzubertowski/TreeFrogUI)** (frontend
   CC BY-NC-SA 4.0, other parts under their own licences): the R36SX card
   format, the second-SD-slot investigation, battery/charger ADC values, the
-  OTG controller.
+  OTG controller, and which libretro cores and build switches suit this
+  CPU.
 - **[LilSmokeOS](https://github.com/josepilas/LilSmokeOS)** (MPL-2.0): stock
   board-file analysis and evidence that stock cards may carry a second
   partition.

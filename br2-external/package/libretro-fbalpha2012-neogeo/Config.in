@@ -1,0 +1,9 @@
+config BR2_PACKAGE_LIBRETRO_FBALPHA2012_NEOGEO
+	bool "libretro-fbalpha2012-neogeo"
+	depends on BR2_PACKAGE_RETROARCH
+	depends on BR2_INSTALL_LIBSTDCPP
+	help
+	  FB Alpha 2012 Neo Geo libretro core: SNK Neo Geo MVS / AES
+	  arcade games.
+
+	  https://github.com/libretro/fbalpha2012_neogeo

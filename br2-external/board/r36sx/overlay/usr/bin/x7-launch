@@ -1,0 +1,48 @@
+#!/bin/sh
+# X7 Game: start a game.  x7-launch <emulator> <game file>
+#   <emulator>  a RetroArch core name (/usr/lib/libretro/<name>_libretro.so)
+#               or "pcsx4all"
+# The emulator's output goes to /share/system/logs/last-game.log (or
+# /tmp/last-game.log when the data partition is missing).
+emu=$1
+rom=$2
+if test -z "$emu" || test -z "$rom"; then
+	echo "usage: x7-launch <emulator> <game file>" >&2
+	exit 2
+fi
+
+if mountpoint -q /share; then
+	SYS=/share/system
+else
+	SYS=/tmp/x7-system
+fi
+mkdir -p "$SYS/logs"
+LOG=$SYS/logs/last-game.log
+
+{
+	echo "X7 Game: $emu: $rom"
+	date
+} > "$LOG" 2>/dev/null || LOG=/dev/null
+
+case "$emu" in
+pcsx4all)
+	exec /usr/bin/pcsx4all -iso "$rom" >> "$LOG" 2>&1
+	;;
+*)
+	core=/usr/lib/libretro/${emu}_libretro.so
+	if ! test -f "$core"; then
+		echo "X7 Game: no emulator $core" >> "$LOG"
+		exit 3
+	fi
+	RA=$SYS/retroarch
+	mkdir -p "$RA/cache" "$RA/logs" "$RA/remaps" "$RA/playlists" \
+		/share/saves /share/screenshots /share/bios 2>/dev/null
+	# the defaults the first time; after that the user's copy (RetroArch
+	# saves menu changes into it)
+	test -s "$RA/retroarch.cfg" || cp /usr/share/x7game/retroarch.cfg "$RA/retroarch.cfg"
+	exec /usr/bin/retroarch --verbose \
+		--config "$RA/retroarch.cfg" \
+		--appendconfig /usr/share/x7game/retroarch-fixed.cfg \
+		-L "$core" "$rom" >> "$LOG" 2>&1
+	;;
+esac

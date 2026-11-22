@@ -1,0 +1,9 @@
+config BR2_PACKAGE_LIBRETRO_STELLA2014
+	bool "libretro-stella2014"
+	depends on BR2_PACKAGE_RETROARCH
+	depends on BR2_INSTALL_LIBSTDCPP
+	help
+	  Stella 2014 libretro core: Atari 2600 (the older, lighter
+	  Stella 3.9).
+
+	  https://github.com/libretro/stella2014-libretro

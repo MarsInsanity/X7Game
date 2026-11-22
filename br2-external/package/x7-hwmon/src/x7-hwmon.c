@@ -2,9 +2,9 @@
 /*
  * x7-hwmon - the X7 Game console's hardware monitor.
  *
- * Runs on the screen console (tty1, started by init through x7-console).
- * It prints the state of the hardware once, then "Welcome to X7 Game!", then
- * one line for every hardware event:
+ * Runs in the background (started by init). It prints the state of the
+ * hardware once, then "Welcome to X7 Game!", then one line for every
+ * hardware event:
  *   - every button press and release (D-pad, A, B, X, Y, L1, L2, R1, R2,
  *     SELECT, START, FN, VOL+, VOL-, POWER);
  *   - headphone jack plugged / unplugged (the kernel switches the audio
@@ -17,7 +17,7 @@
  * Every line also goes to /run/x7-events.log (watch it over the USB shell
  * with "tail -f /run/x7-events.log").
  *
- *   x7-hwmon               monitor (what tty1 runs)
+ *   x7-hwmon               monitor (what init runs)
  *   x7-hwmon --status      print the state once and exit
  *   x7-hwmon --colortest   draw colour gradients on the screen for 8 s
  */
@@ -220,11 +220,17 @@ static void add_input(const char *node)
 	fd = open(node, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0)
 		return;
-	in = &inputs[ninputs++];
-	in->fd = fd;
-	snprintf(in->node, sizeof(in->node), "%s", node);
+	in = &inputs[ninputs];
 	if (ioctl(fd, EVIOCGNAME(sizeof(in->name)), in->name) < 0)
 		snprintf(in->name, sizeof(in->name), "?");
+	/* x7-padd's virtual pad repeats the real buttons: don't count them twice */
+	if (!strcmp(in->name, "X7 Game Gamepad")) {
+		close(fd);
+		return;
+	}
+	in->fd = fd;
+	snprintf(in->node, sizeof(in->node), "%s", node);
+	ninputs++;
 }
 
 static void scan_inputs(void)

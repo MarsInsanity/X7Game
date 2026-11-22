@@ -1,0 +1,30 @@
+# Systems the game list shows: the folder in X7DATA/roms, its emulators
+# (the first is the default; X in the game list picks another), its name.
+# Emulators are RetroArch core names (/usr/lib/libretro/<name>_libretro.so)
+# or "pcsx4all". A system shows up when one of its emulators is installed.
+#
+# folder       emulators                                       name
+nes            fceumm                                          Nintendo NES / Famicom
+fds            fceumm                                          Famicom Disk System
+snes           snes9x2005                                      Super Nintendo / Super Famicom
+gb             gambatte                                        Game Boy
+gbc            gambatte                                        Game Boy Color
+gba            gpsp                                            Game Boy Advance
+mastersystem   picodrive                                       Sega Master System
+megadrive      picodrive                                       Sega Mega Drive / Genesis
+gamegear       picodrive                                       Sega Game Gear
+sg1000         picodrive                                       Sega SG-1000
+segacd         picodrive                                       Sega CD / Mega CD
+sega32x        picodrive                                       Sega 32X
+pcengine       mednafen_pce_fast                               PC Engine / TurboGrafx-16
+pcenginecd     mednafen_pce_fast                               PC Engine CD / TurboGrafx-CD
+ngp            race                                            Neo Geo Pocket
+ngpc           race                                            Neo Geo Pocket Color
+wswan          mednafen_wswan                                  WonderSwan
+wswanc         mednafen_wswan                                  WonderSwan Color
+atari2600      stella2014                                      Atari 2600
+atari7800      prosystem                                       Atari 7800
+lynx           handy                                           Atari Lynx
+psx            pcsx4all                                        PlayStation
+neogeo         fbalpha2012_neogeo                              Neo Geo
+fbneo          fbalpha2012_cps1,fbalpha2012_cps2,fbalpha2012_neogeo Arcade (CPS-1, CPS-2, Neo Geo)

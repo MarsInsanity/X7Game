@@ -1,0 +1,9 @@
+config BR2_PACKAGE_LIBRETRO_FBALPHA2012_CPS1
+	bool "libretro-fbalpha2012-cps1"
+	depends on BR2_PACKAGE_RETROARCH
+	depends on BR2_INSTALL_LIBSTDCPP
+	help
+	  FB Alpha 2012 CPS-1 libretro core: Capcom CP System arcade
+	  games.
+
+	  https://github.com/libretro/fbalpha2012_cps1

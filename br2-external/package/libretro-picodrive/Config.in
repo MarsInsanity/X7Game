@@ -1,0 +1,8 @@
+config BR2_PACKAGE_LIBRETRO_PICODRIVE
+	bool "libretro-picodrive"
+	depends on BR2_PACKAGE_RETROARCH
+	help
+	  PicoDrive libretro core: Sega Mega Drive / Genesis, Mega-CD,
+	  32X (MIPS SH2 recompiler), Master System, Game Gear and Pico.
+
+	  https://github.com/libretro/picodrive

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_LIBRETRO_BEETLE_WSWAN
+	bool "libretro-beetle-wswan"
+	depends on BR2_PACKAGE_RETROARCH
+	help
+	  Beetle WonderSwan (Mednafen) libretro core: WonderSwan and
+	  WonderSwan Color.
+
+	  https://github.com/libretro/beetle-wswan-libretro
