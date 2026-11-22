@@ -145,6 +145,7 @@ tail -f /run/x7-events.log   the console's event lines, live
 x7-soundtest                 test tones (speaker or headphones)
 x7-colortest                 colour ramps on the screen
 x7-tf2-probe                 read-only helper to find TF2's wiring
+x7-bench3d                   3D speed test on the screen (~1 min), saved to X7DATA
 poweroff                     switch the console off
 ```
 

@@ -38,4 +38,5 @@ echo "X7 Game - root shell on the USB cable."
 echo "  x7-status       hardware state      tail -f /run/x7-events.log  live events"
 echo "  x7-soundtest    play a test sound   x7-colortest   colour test on the screen"
 echo "  x7-tf2-probe    find TF2's wiring   poweroff       switch the console off"
+echo "  x7-update       install an update   x7-bench3d     3D speed test (about 1 min)"
 exec /bin/sh -l
