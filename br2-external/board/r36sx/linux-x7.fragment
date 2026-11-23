@@ -32,6 +32,9 @@ CONFIG_INPUT_EVDEV=y
 # x7-padd joins the two button devices into one virtual gamepad for emulators
 CONFIG_INPUT_MISC=y
 CONFIG_INPUT_UINPUT=y
+# L2/R2/VOL+/VOL-/FN: interrupt-driven gpio-keys (the polled driver stays
+# built, for going back to sampling in the device tree)
+CONFIG_KEYBOARD_GPIO=y
 CONFIG_KEYBOARD_GPIO_POLLED=y
 CONFIG_KEYBOARD_GPIO_SERIALIZER=y
 CONFIG_NZEUS_R36S_POWER=y
@@ -61,8 +64,6 @@ CONFIG_BLK_DEV_LOOP_MIN_COUNT=0
 # CONFIG_KEYBOARD_ATKBD is not set
 # CONFIG_INPUT_MOUSE is not set
 # CONFIG_SERIO is not set
-# (CONFIG_KEYBOARD_GPIO, interrupt-driven gpio-keys, stays for now: the
-# buttons are polled today, and moving them to interrupts is still open.)
 # USB host side: no USB-serial adapters and no CDC-ACM modems (the console's
 # own serial shell is the ACM gadget, USB_CONFIGFS_ACM above); the gadget uses
 # ACM only, not FunctionFS.

@@ -44,6 +44,14 @@ What X7 Game relies on, and where each fact comes from. "NZEUS" = NZEUS Deck
   wired to the D-pad, the right stick to X/A/B/Y (no analog input).
 - Direct pins, active low: L2 = L07, R2 = L11, VOL+ = L13, VOL- = L12 (also
   UART0 TX: X7 Game keeps the UART off), FN = L02, POWER = L14.
+- How X7 Game reads them: the shift register is sampled every 16 ms (8 ms
+  while a game started from the game list runs; it can't raise interrupts).
+  The direct pins and the headphone detect pin L15 use the GPIO controller's
+  edge interrupts (gpio-hc16xx; the SF3000 device tree does the same for
+  L07/L11/L13): gpio-keys for L2/R2/VOL+/VOL-/FN, and an interrupt that
+  starts the power button and headphone checks (patch 0017), so an idle
+  console no longer samples them on a timer. Interrupts on L02, L12, L14 and
+  L15 were first used by X7 Game (to be confirmed on hardware).
 
 ## Power
 

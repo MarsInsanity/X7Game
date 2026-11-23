@@ -652,6 +652,48 @@ static const char *share_problem(void)
 	return NULL;
 }
 
+/*
+ * The main pad (D-pad, A, B, X, Y, L1, R1, SELECT, START) is a shift register
+ * the kernel samples every 16 ms (device tree); it can't raise interrupts.
+ * While a game runs it is sampled every 8 ms: half the input delay for about
+ * 0.5 % more CPU. The input poller's "poll" file takes the new interval.
+ */
+#define PAD_POLL_GAME	8
+#define PAD_POLL_IDLE	16
+
+static void pad_poll(int ms)
+{
+	DIR *d = opendir("/sys/class/input");
+	struct dirent *e;
+
+	if (!d)
+		return;
+	while ((e = readdir(d))) {
+		char path[300], name[64] = "";
+		FILE *f;
+
+		if (strncmp(e->d_name, "input", 5))
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/input/%s/name", e->d_name);
+		f = fopen(path, "re");
+		if (!f)
+			continue;
+		if (!fgets(name, sizeof(name), f))
+			name[0] = 0;
+		fclose(f);
+		name[strcspn(name, "\n")] = 0;
+		if (strcmp(name, "serializer-keys"))
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/input/%s/poll", e->d_name);
+		f = fopen(path, "we");
+		if (f) {
+			fprintf(f, "%d\n", ms);
+			fclose(f);
+		}
+	}
+	closedir(d);
+}
+
 static void launch(const char *emu, const char *path, const char *game)
 {
 	char label[64];
@@ -673,6 +715,7 @@ static void launch(const char *emu, const char *path, const char *game)
 	msg[0] = 0;
 
 	close_inputs();
+	pad_poll(PAD_POLL_GAME);
 	pid = fork();
 	if (pid == 0) {
 		signal(SIGPIPE, SIG_DFL);
@@ -684,6 +727,7 @@ static void launch(const char *emu, const char *path, const char *game)
 	if (pid > 0)
 		while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
 			;
+	pad_poll(PAD_POLL_IDLE);
 	/* the emulator has just written its saves and its config: get them
 	 * onto the card now, not at the next writeback ~30 s later, in case
 	 * the console hangs or loses power before that */

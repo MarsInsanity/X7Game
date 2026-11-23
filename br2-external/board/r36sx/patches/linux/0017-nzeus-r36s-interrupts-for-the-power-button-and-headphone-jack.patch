@@ -1,0 +1,192 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Mon, 23 Nov 2026 03:00:00 -0800
+Subject: [PATCH] power/char: nzeus-r36s: interrupts for the power button and
+ headphone jack (X7 Game)
+
+The power button (L14) and the headphone detect pin (L15) were each polled every 50 ms by a delayed work, waking an idle console 40 times a second. gpio-hc16xx gives edge interrupts (the SF3000 device tree uses them for its buttons), so an edge on either pin now starts the work: the power button work then runs every 50 ms only while the button is held (or while "voldown" = key), keeping the 3 s hold-to-off, and the headphone work samples until the level is stable (4 equal samples) and stops. Without an interrupt for the pin both fall back to polling as before.
+---
+ drivers/char/nzeus-r36s-audio.c         | 37 ++++++++++++++++++++++++----
+ drivers/power/supply/nzeus-r36s-power.c | 43 ++++++++++++++++++++++++++++-----
+ 2 files changed, 69 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/char/nzeus-r36s-audio.c b/drivers/char/nzeus-r36s-audio.c
+index 25cf48b61..9e409c12f 100644
+--- a/drivers/char/nzeus-r36s-audio.c
++++ b/drivers/char/nzeus-r36s-audio.c
+@@ -34,15 +34,19 @@
+  * output still reaches the jack). No new kernel is needed to set it up.
+  *
+  * X7 Game: the plugged level can also come from the device tree
+- * ("x7,hp-plugged-level" = <0> or <1>). The pin is then polled every 50 ms
++ * ("x7,hp-plugged-level" = <0> or <1>). The pin is then sampled every 50 ms
+  * and debounced (4 equal samples); each change switches the speaker amp at
+  * once (also during playback) and is reported as SW_HEADPHONE_INSERT on the
+- * input device "R36S headphone jack".
++ * input device "R36S headphone jack". With an interrupt for L15, an edge
++ * starts the sampling and it stops once the level is stable again, so an
++ * idle console no longer wakes 20 times a second for it; without one it is
++ * sampled all the time, as before.
+  */
+ #include <linux/delay.h>
+ #include <linux/devm-helpers.h>
+ #include <linux/device.h>
+ #include <linux/input.h>
++#include <linux/interrupt.h>
+ #include <linux/property.h>
+ #include <linux/spinlock.h>
+ #include <linux/workqueue.h>
+@@ -106,7 +110,8 @@ struct r36s_audio {
+ 	int hp_last, hp_same;		/* debounce: last sample and how often it repeated */
+ 	int hp_reported;		/* last SW_HEADPHONE_INSERT value sent, -1 = none */
+ 	struct input_dev *jack;		/* "R36S headphone jack" (SW_HEADPHONE_INSERT) */
+-	struct delayed_work hp_work;	/* polls L15 */
++	struct delayed_work hp_work;	/* samples L15 */
++	bool hp_irq;			/* an L15 edge starts hp_work */
+ 	spinlock_t amp_lock;		/* amp_update() from the timer, the poll and ALSA */
+ 	bool amp_on;			/* what we last told L19 */
+ 	struct mutex lock;		/* set-up vs. regs */
+@@ -193,7 +198,19 @@ static void hp_poll(struct work_struct *work)
+ 		}
+ 		hp_report(a);
+ 	}
+-	schedule_delayed_work(&a->hp_work, msecs_to_jiffies(HP_POLL_MS));
++	/* With the interrupt: stop once the level is stable and reported; the
++	 * next edge starts the sampling again. */
++	if (!a->hp_irq || raw < 0 || a->hp_same < HP_STABLE || raw != a->hp_raw)
++		schedule_delayed_work(&a->hp_work, msecs_to_jiffies(HP_POLL_MS));
++}
++
++/* Either edge of L15: sample now (hard IRQ context: only queue). */
++static irqreturn_t hp_irq_handler(int irq, void *data)
++{
++	struct r36s_audio *a = data;
++
++	mod_delayed_work(system_percpu_wq, &a->hp_work, 0);
++	return IRQ_HANDLED;
+ }
+ 
+ static void sys_rmw(struct r36s_audio *a, unsigned int off, u32 clear, u32 set)
+@@ -638,8 +655,18 @@ static int r36s_audio_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 	platform_set_drvdata(pdev, a);
+-	if (a->hp)
++	if (a->hp) {
++		/* last, so devm frees it first, before the work and the card go */
++		int irq = gpiod_to_irq(a->hp);
++
++		if (irq > 0 && !devm_request_irq(dev, irq, hp_irq_handler,
++						 IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
++						 "r36s-headphone-jack", a))
++			a->hp_irq = true;
++		dev_info(dev, "headphone jack: %s\n", a->hp_irq ? "interrupt" : "sampled every 50 ms");
++		/* the first samples run until the level is stable */
+ 		schedule_delayed_work(&a->hp_work, msecs_to_jiffies(HP_POLL_MS));
++	}
+ 	dev_info(dev, "sound card R36S ready (nothing set up until the first playback)\n");
+ 	return 0;
+ }
+diff --git a/drivers/power/supply/nzeus-r36s-power.c b/drivers/power/supply/nzeus-r36s-power.c
+index 44560db76..0aa5ade63 100644
+--- a/drivers/power/supply/nzeus-r36s-power.c
++++ b/drivers/power/supply/nzeus-r36s-power.c
+@@ -20,10 +20,13 @@
+  * (linux-port/power/README.md): the power button pulls L14 low while pressed.
+  * L14 only SENSES the button: driving it low from the SoC does nothing
+  * (hardware 2026-10-10: 15 s low, console stayed on). It always stays an INPUT:
+- *   - polled every 50 ms as KEY_POWER (input device "r36s-power-button").
+- *     Own delayed work, NOT the input poller: the input poller only runs
+- *     while a program has the event device open, and hold-to-off must work
+- *     with no program running;
++ *   - read as KEY_POWER (input device "r36s-power-button") by an own delayed
++ *     work, NOT the input poller: the input poller only runs while a program
++ *     has the event device open, and hold-to-off must work with no program
++ *     running. X7 Game: an interrupt on either edge of L14 starts the work,
++ *     which then runs every 50 ms only while the button is held (and while
++ *     "voldown" = key), so an idle console no longer wakes 20 times a second
++ *     for it. Without an interrupt for L14 it is polled every 50 ms as before;
+  *   - held for 3 s: orderly power-off (forced if no /sbin/poweroff exists).
+  *
+  * Optional poweroff-gpios (GPIO L01, active low) = the stock device tree's
+@@ -56,6 +59,7 @@
+ #include <linux/devm-helpers.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/input.h>
++#include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+@@ -80,6 +84,7 @@ struct r36s_power {
+ 	struct gpio_desc *poweroff;		/* L01 power-pin, NULL if not described */
+ 	struct input_dev *button;
+ 	struct delayed_work poll;
++	bool irq_mode;				/* L14 interrupt starts the poll */
+ 	unsigned int held_ms;
+ 	bool off_requested;
+ 	struct gpio_desc *voldown;		/* L12 Vol-, only while taken from uart0 */
+@@ -201,7 +206,10 @@ static void r36s_button_poll(struct work_struct *work)
+ 	struct input_dev *input = p->button;
+ 	int pressed = gpiod_get_value(p->power);
+ 
+-	schedule_delayed_work(&p->poll, msecs_to_jiffies(BUTTON_POLL_MS));
++	/* With the interrupt: go on only while held, or reading Vol-, or the
++	 * pin can't be read; the next edge starts the work again. */
++	if (!p->irq_mode || pressed != 0 || READ_ONCE(p->voldown))
++		schedule_delayed_work(&p->poll, msecs_to_jiffies(BUTTON_POLL_MS));
+ 	mutex_lock(&p->voldown_lock);
+ 	if (p->voldown) {
+ 		int down = gpiod_get_value(p->voldown);
+@@ -224,6 +232,15 @@ static void r36s_button_poll(struct work_struct *work)
+ 	}
+ }
+ 
++/* Either edge of L14: read the button now (hard IRQ context: only queue). */
++static irqreturn_t r36s_button_irq(int irq, void *data)
++{
++	struct r36s_power *p = data;
++
++	mod_delayed_work(system_percpu_wq, &p->poll, 0);
++	return IRQ_HANDLED;
++}
++
+ static int r36s_power_off(struct sys_off_data *data)
+ {
+ 	struct r36s_power *p = data->cb_data;
+@@ -266,7 +283,7 @@ static int r36s_restart_init(struct device *dev, struct r36s_power *p)
+ 
+ static int r36s_power_button_init(struct device *dev, struct r36s_power *p)
+ {
+-	int ret;
++	int ret, irq;
+ 
+ 	/* AS-IS: probing must not touch the power-pin; only power-off drives it. */
+ 	p->poweroff = devm_gpiod_get_optional(dev, "poweroff", GPIOD_ASIS);
+@@ -298,6 +315,17 @@ static int r36s_power_button_init(struct device *dev, struct r36s_power *p)
+ 	ret = devm_delayed_work_autocancel(dev, &p->poll, r36s_button_poll);
+ 	if (ret)
+ 		return ret;
++	/* Requested after the work, so devm frees it first on unbind. */
++	irq = gpiod_to_irq(p->power);
++	if (irq > 0 && !devm_request_irq(dev, irq, r36s_button_irq,
++					 IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
++					 "r36s-power-button", p)) {
++		p->irq_mode = true;
++		dev_info(dev, "power button: interrupt %d\n", irq);
++	} else {
++		dev_info(dev, "power button: polled every %d ms\n", BUTTON_POLL_MS);
++	}
++	/* one read now: reports the state, and keeps polling if it is held */
+ 	schedule_delayed_work(&p->poll, msecs_to_jiffies(BUTTON_POLL_MS));
+ 	return 0;
+ }
+@@ -342,6 +370,9 @@ static ssize_t voldown_store(struct device *dev, struct device_attribute *attr,
+ 			else
+ 				p->voldown = d;
+ 		}
++		/* read Vol- from now on, also while the power button is idle */
++		if (p->voldown)
++			mod_delayed_work(system_percpu_wq, &p->poll, 0);
+ 	} else if (sysfs_streq(buf, "uart")) {
+ 		if (p->voldown) {
+ 			input_report_key(p->button, KEY_VOLUMEDOWN, 0);

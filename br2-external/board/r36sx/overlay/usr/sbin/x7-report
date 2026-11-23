@@ -47,6 +47,11 @@ echo
 echo "== clock gates (bit set = clock off) =="
 echo "GATE0 0x18800060: $(devmem 0x18800060 32 2>/dev/null)"
 echo "GATE1 0x18800064: $(devmem 0x18800064 32 2>/dev/null)"
+echo
+# the buttons' and headphone jack's GPIO interrupts: the counts should only
+# grow when they are pressed / plugged (patch 0017, gpio-keys)
+echo "== interrupts =="
+cat /proc/interrupts
 if test "$1" = session; then
 	echo
 	echo "== console events (last 500 lines) =="

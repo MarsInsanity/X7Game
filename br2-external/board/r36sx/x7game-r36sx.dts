@@ -257,48 +257,49 @@
 		key-right  { reg = <0x0b>; label = "RIGHT";  linux,code = <0x223>; };
 	};
 
-	/* Buttons on their own pins (all active low, polled). */
+	/* Buttons on their own pins (all active low), interrupt-driven: the GPIO
+	 * controller raises an interrupt on each edge (gpio-hc16xx; the SF3000
+	 * device tree uses the same for L2/R2/VOL+), so an idle console no longer
+	 * wakes 50 times a second to sample them. gpio-keys debounces in software:
+	 * an event goes out 5 ms after the last edge. To go back to sampling,
+	 * use compatible = "gpio-keys-polled" with poll-interval = <20> and
+	 * debounce-interval = <0> on each key. */
 	r36s-keys {
-		compatible = "gpio-keys-polled";
-		poll-interval = <20>;
-		/* debounce-interval 0 on every key: with the driver's 5 ms default it
-		 * skipped the poll after each change, so a release or a quick second
-		 * press came a poll late. Contact bounce lasts a few ms, well under
-		 * the 20 ms between samples, so it cannot cause a false toggle. */
+		compatible = "gpio-keys";
 
 		key-l2 {
 			label = "L2";
 			linux,code = <0x138>;
 			gpios = <&gpio 0x07 1>;
-			debounce-interval = <0>;
+			debounce-interval = <5>;
 		};
 
 		key-r2 {
 			label = "R2";
 			linux,code = <0x139>;
 			gpios = <&gpio 0x0b 1>;
-			debounce-interval = <0>;
+			debounce-interval = <5>;
 		};
 
 		key-volup {
 			label = "VOL+";
 			linux,code = <0x73>;
 			gpios = <&gpio 0x0d 1>;
-			debounce-interval = <0>;
+			debounce-interval = <5>;
 		};
 
 		key-voldown {
 			label = "VOL-";
 			linux,code = <0x72>;
 			gpios = <&gpio 0x0c 1>;
-			debounce-interval = <0>;
+			debounce-interval = <5>;
 		};
 
 		key-fn {
 			label = "FN";
 			linux,code = <0x13c>;
 			gpios = <&gpio 0x02 1>;
-			debounce-interval = <0>;
+			debounce-interval = <5>;
 		};
 	};
 
