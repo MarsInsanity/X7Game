@@ -25,6 +25,9 @@ config BR2_PACKAGE_X7_HWMON
 	  the SD card's partition table at the first start
 	  (S05x7data), and reports whether X7DATA was closed cleanly.
 
+	  x7-fbspeed: measures how fast programs can write the screen,
+	  uncached and write-combined.
+
 comment "x7-hwmon needs a toolchain w/ threads"
 	depends on BR2_USE_MMU
 	depends on !BR2_TOOLCHAIN_HAS_THREADS

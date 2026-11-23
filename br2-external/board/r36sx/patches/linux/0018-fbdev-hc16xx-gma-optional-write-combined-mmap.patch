@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Mon, 23 Nov 2026 04:00:00 -0800
+Subject: [PATCH] fbdev: hc16xx-gma: optional write-combined mmap (X7 Game)
+
+User space maps the pixel buffer uncached, so every store of an emulator frame is its own bus write. The MIPS 74K can gather uncached stores into bursts with the "uncached accelerated" cache attribute (CCA 7), but Linux sets writecombine = _CACHE_UNCACHED for the 24K/34K/74K, so DMA_ATTR_WRITE_COMBINE would change nothing. Add a module parameter, mmap_wc (off by default; kernel command line hc16xx_gma_fb.mmap_wc=1 or /sys/module/hc16xx_gma_fb/parameters/mmap_wc at run time), that maps the buffer for user space with CCA 7 through remap_pfn_range(). The kernel mapping (fbcon) stays uncached.
+---
+ drivers/video/fbdev/hc16xx-gma-fb.c | 41 +++++++++++++++++++++++++++++++------
+ 1 file changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/video/fbdev/hc16xx-gma-fb.c b/drivers/video/fbdev/hc16xx-gma-fb.c
+index a59b2b6f7..de6ea8db9 100644
+--- a/drivers/video/fbdev/hc16xx-gma-fb.c
++++ b/drivers/video/fbdev/hc16xx-gma-fb.c
+@@ -20,8 +20,10 @@
+  * write), and NZEUS Deck draws in RGB565 anyway, so no conversion is needed.
+  * RGB565 has no alpha: the layer is drawn fully opaque (global alpha 255).
+  */
++#include <linux/dma-direct.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/fb.h>
++#include <linux/mm.h>
+ #include <linux/io.h>
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
+@@ -341,16 +343,43 @@ static int hc_set_par(struct fb_info *info)
+ 	return ret;
+ }
+ 
++/*
++ * X7 Game: write-combined mmap(), off by default. User space (the emulators)
++ * draws into this buffer with sequential stores; mapped uncached, every store
++ * is its own bus write. The 74K's "uncached accelerated" cache attribute
++ * (CCA 7) gathers them into bursts. Linux's cpu-probe.c sets
++ * writecombine = _CACHE_UNCACHED for the 24K/34K/74K, so
++ * DMA_ATTR_WRITE_COMBINE changes nothing and the attribute is set here by
++ * hand. Whether this SoC's bus takes the bursts is not known yet, so it is a
++ * switch: hc16xx_gma_fb.mmap_wc=1 on the kernel command line, or
++ * "echo 1 > /sys/module/hc16xx_gma_fb/parameters/mmap_wc" before a program
++ * maps the screen (existing mappings keep their attribute). The kernel's own
++ * mapping (the text console) stays uncached.
++ */
++static bool mmap_wc;
++module_param(mmap_wc, bool, 0644);
++MODULE_PARM_DESC(mmap_wc, "map the pixels for user space write-combined (MIPS uncached accelerated); off by default");
++
+ static int hc_mmap(struct fb_info *info, struct vm_area_struct *vma)
+ {
+ 	struct hc_gma *g = info->par;
++	unsigned long size = vma->vm_end - vma->vm_start;
++	unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
++	phys_addr_t phys;
++	pgprot_t prot;
+ 
+-	/* Uncached on purpose. Write-combining ("uncached accelerated") was tried
+-	 * on 2026-10-12: Linux's cpu-probe.c sets writecombine = _CACHE_UNCACHED
+-	 * for the MIPS 74K (PRID_IMP_74K) on purpose, so DMA_ATTR_WRITE_COMBINE
+-	 * would change nothing here, and forcing the accelerated mode past that
+-	 * decision is not worth the risk. The 16-bit mode is the speed-up. */
+-	return dma_mmap_coherent(g->dev, vma, g->pixels, g->pixels_dma, PIXEL_BYTES);
++	if (!READ_ONCE(mmap_wc))
++		return dma_mmap_coherent(g->dev, vma, g->pixels, g->pixels_dma, PIXEL_BYTES);
++
++	if (off >= PAGE_ALIGN(PIXEL_BYTES) || size > PAGE_ALIGN(PIXEL_BYTES) - off)
++		return -EINVAL;
++	/* dma_alloc_coherent() gave physically contiguous pages */
++	phys = dma_to_phys(g->dev, g->pixels_dma);
++	prot = __pgprot((pgprot_val(vma->vm_page_prot) & ~_CACHE_MASK) |
++			_CACHE_UNCACHED_ACCELERATED);
++	dev_info_once(g->dev, "user space mappings: write-combined (uncached accelerated)\n");
++	return remap_pfn_range(vma, vma->vm_start, PHYS_PFN(phys) + vma->vm_pgoff,
++			       size, prot);
+ }
+ 
+ static const struct fb_ops hc_ops = {

@@ -234,6 +234,7 @@ x7-launch fceumm FILE        start a game (emulator name from systems.txt;
                              refused while another game runs)
 x7-soundtest                 test tones (speaker or headphones)
 x7-datarepair                check and repair X7DATA
+x7-fbspeed                   screen write speed, uncached and write-combined
 x7-update --status           running system slot and versions
 poweroff                     switch the console off
 ```

@@ -1,0 +1,12 @@
+#!/bin/sh
+# X7 Game: display settings from x7game.cfg. fb_writecombine=1 maps the
+# screen write-combined for programs ("uncached accelerated", kernel patch
+# 0018): faster emulator frames if this console's bus takes it. Off by
+# default until it is confirmed; x7-fbspeed measures both modes.
+test "$1" = start || exit 0
+test -f /run/x7game.conf && . /run/x7game.conf
+P=/sys/module/hc16xx_gma_fb/parameters/mmap_wc
+case "$fb_writecombine" in
+1) test -w "$P" && echo 1 > "$P" ;;
+esac
+exit 0
