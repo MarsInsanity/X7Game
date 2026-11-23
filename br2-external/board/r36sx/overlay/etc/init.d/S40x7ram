@@ -24,10 +24,20 @@ echo pending > "$S"
 		# watermarks) for the ~38 MiB it had at boot, and nothing redoes that
 		# when memory is added this way. Writing it makes the kernel
 		# recompute them; the value is the kernel's own formula,
-		# sqrt(KiB * 16), as an integer Newton loop because this BusyBox awk
-		# has no sqrt().
-		awk '/^MemTotal:/ { n = $2 * 16; x = n; while (x * x > n) x = int((x + n / x) / 2); print x }' \
-			/proc/meminfo > /proc/sys/vm/min_free_kbytes
+		# sqrt(KiB * 16), as an integer Newton loop in shell arithmetic
+		# (an awk version wrote 1 on the console). Written only when it is
+		# sane: too small a reserve can lock the console up when memory
+		# runs short.
+		n=$((after * 16))
+		x=$n
+		y=$(((x + 1) / 2))
+		while test "$y" -lt "$x"; do
+			x=$y
+			y=$(((x + n / x) / 2))
+		done
+		if test "$x" -ge 128 && test "$x" -le 65536; then
+			echo "$x" > /proc/sys/vm/min_free_kbytes
+		fi
 		mfk=
 		read -r mfk < /proc/sys/vm/min_free_kbytes
 		echo released > "$S"
