@@ -1,7 +1,9 @@
 # x7-hwmon, x7-tf2-probe, x7-datapart, x7-padd and x7-browser (built by
 # Buildroot with the target toolchain)
 CFLAGS ?= -O2
-CFLAGS += -Wall -Wextra -Wno-unused-parameter -std=gnu11
+# override: Buildroot passes CFLAGS on the command line, which would drop a
+# plain += (these are added after its flags)
+override CFLAGS += -Wall -Wextra -Wno-unused-parameter -std=gnu11
 PREFIX ?= /usr
 
 PROGRAMS = x7-hwmon x7-tf2-probe x7-datapart x7-padd x7-browser

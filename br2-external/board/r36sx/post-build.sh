@@ -9,6 +9,19 @@ printf '\047\005\031\126' > "$TARGET/usr/share/x7game/uimage-magic"
 chmod 0755 "$TARGET"/etc/init.d/S*x7* "$TARGET"/usr/bin/x7-* \
 	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/sbin/x7-update" "$TARGET/usr/libexec/x7-usb-shell"
 
+# Start scripts with nothing to do: there is no /etc/sysctl.conf or
+# /etc/sysctl.d (S02sysctl would still run find, xargs and logger at every
+# boot), and the kernel has no module support (S11modules). The sysctl
+# applet stays for the USB shell. Bring S02sysctl back if a sysctl file is
+# ever added.
+rm -f "$TARGET/etc/init.d/S02sysctl" "$TARGET/etc/init.d/S11modules"
+
+# Audio files nothing uses: the speaker-test voice samples and data
+# (x7-soundtest only plays sine tones) and alsa-lib's shared-memory sound
+# server. alsa.conf, cards/ and pcm/ in /usr/share/alsa must stay.
+rm -rf "$TARGET/usr/share/sounds/alsa" "$TARGET/usr/share/alsa/speaker-test"
+rm -f "$TARGET/usr/bin/aserver"
+
 cat > "$TARGET/etc/x7game-release" <<EOF
 X7_VERSION=${X7_VERSION:-dev}
 X7_BOARD=r36sx

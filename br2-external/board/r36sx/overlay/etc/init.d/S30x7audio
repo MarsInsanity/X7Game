@@ -1,12 +1,13 @@
 #!/bin/sh
 # X7 Game: sound settings from x7game.cfg - the headphone detect polarity
-# (automatic speaker/headphone switching is done by the kernel driver) and
-# the start volume.
+# (automatic speaker/headphone switching is done by the kernel driver; "off"
+# ignores the detect pin and always uses the speaker) and the start volume.
 test "$1" = start || exit 0
 test -f /run/x7game.conf && . /run/x7game.conf
-A=$(ls -d /sys/bus/platform/devices/*.audio 2>/dev/null | head -n 1)
+for A in /sys/bus/platform/devices/*.audio; do break; done
+test -e "$A" || A=
 case "$headphone_plugged_level" in
-0|1) test -n "$A" && echo "$headphone_plugged_level" > "$A/headphones" 2>/dev/null ;;
+0|1|off) test -n "$A" && echo "$headphone_plugged_level" > "$A/headphones" 2>/dev/null ;;
 esac
 pct=${volume_percent:-25}
 case "$pct" in *[!0-9]*|'') pct=25 ;; esac

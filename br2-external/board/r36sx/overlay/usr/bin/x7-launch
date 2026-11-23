@@ -2,8 +2,10 @@
 # X7 Game: start a game.  x7-launch <emulator> <game file>
 #   <emulator>  a RetroArch core name (/usr/lib/libretro/<name>_libretro.so)
 #               or "pcsx4all"
-# The emulator's output goes to /share/system/logs/last-game.log (or
-# /tmp/last-game.log when the data partition is missing).
+# The emulator's output goes to /share/system/logs/last-game.log
+# (/tmp/x7-system/logs/last-game.log when the data partition is missing, or
+# nowhere if the log can't be written).
+# Exits with 4, without touching the log, when a game is already running.
 emu=$1
 rom=$2
 if test -z "$emu" || test -z "$rom"; then
@@ -11,18 +13,62 @@ if test -z "$emu" || test -z "$rom"; then
 	exit 2
 fi
 
+# One emulator at a time: two would fight over the screen, the buttons and
+# the sound card (e.g. a game started from the USB shell while the game list
+# still reacts to the buttons).
+if pidof retroarch pcsx4all >/dev/null; then
+	echo 'X7 Game: a game is already running' >&2
+	exit 4
+fi
+
+# The AVP memory (S40x7ram) reaches Linux only some 15-20 s after start-up;
+# a game started before that has about 38 MiB instead of 117. Wait for it,
+# but only while S40x7ram says it is on its way.
+RAMSTATE=/run/x7-ram.state
+ram_state() {
+	ram=
+	test -f "$RAMSTATE" && read -r ram < "$RAMSTATE"
+}
+ram_state
+if test "$ram" = pending; then
+	# replaces the game list's "Starting ..." line on tty1
+	printf '\r\033[KPreparing memory, the game starts in a few seconds...\n'
+	n=0
+	while test "$ram" = pending && test $n -lt 30; do
+		sleep 1
+		n=$((n + 1))
+		ram_state
+	done
+fi
+
 if mountpoint -q /share; then
 	SYS=/share/system
 else
 	SYS=/tmp/x7-system
 fi
-mkdir -p "$SYS/logs"
+mkdir -p "$SYS/logs" 2>/dev/null
 LOG=$SYS/logs/last-game.log
 
+# (the outer 2>/dev/null keeps a failed redirection's message off tty1)
 {
-	echo "X7 Game: $emu: $rom"
-	date
-} > "$LOG" 2>/dev/null || LOG=/dev/null
+	{
+		echo "X7 Game: $emu: $rom"
+		date
+	} > "$LOG"
+} 2>/dev/null || LOG=/dev/null
+awk -v s="${ram:-unknown}" '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
+	END { printf "X7 Game: AVP memory %s, MemTotal %s kB, MemAvailable %s kB\n", s, t, a }' \
+	/proc/meminfo >> "$LOG" 2>&1
+mountpoint -q /share ||
+	echo "X7 Game: warning: no data partition at /share, so saves and settings may not be kept" >> "$LOG"
+
+# A RetroArch config that is safe to start with: RetroArch writes every input
+# key when it saves (unbound ones as "nul"), so a copy without these two is
+# missing, empty or cut short (X7DATA full or read-only).
+cfg_ok() {
+	grep -q '^input_player1_a_btn' "$1" 2>/dev/null &&
+		grep -q '^input_exit_emulator_btn' "$1" 2>/dev/null
+}
 
 case "$emu" in
 pcsx4all)
@@ -37,11 +83,25 @@ pcsx4all)
 	RA=$SYS/retroarch
 	mkdir -p "$RA/cache" "$RA/logs" "$RA/remaps" "$RA/playlists" \
 		/share/saves /share/screenshots /share/bios 2>/dev/null
-	# the defaults the first time; after that the user's copy (RetroArch
-	# saves menu changes into it)
-	test -s "$RA/retroarch.cfg" || cp /usr/share/x7game/retroarch.cfg "$RA/retroarch.cfg"
+	# The user's copy of the defaults (RetroArch saves menu changes into it),
+	# checked before every start. A bad copy is replaced through a temporary
+	# file, so a full card can't leave a half-written one in its place. If
+	# even that fails, RetroArch gets the read-only defaults: without a
+	# readable --config it ignores --appendconfig and shows no picture, and
+	# with an empty one no button works, not even quit.
+	DEF=/usr/share/x7game/retroarch.cfg
+	CFG=$RA/retroarch.cfg
+	if ! cfg_ok "$CFG"; then
+		echo "X7 Game: $CFG missing or damaged: copying the defaults" >> "$LOG"
+		cp "$DEF" "$CFG.new" 2>> "$LOG" && mv -f "$CFG.new" "$CFG" 2>> "$LOG"
+		if ! cfg_ok "$CFG"; then
+			rm -f "$CFG.new" 2>/dev/null
+			echo "X7 Game: could not write $CFG: using $DEF, menu changes will not be kept" >> "$LOG"
+			CFG=$DEF
+		fi
+	fi
 	exec /usr/bin/retroarch --verbose \
-		--config "$RA/retroarch.cfg" \
+		--config "$CFG" \
 		--appendconfig /usr/share/x7game/retroarch-fixed.cfg \
 		-L "$core" "$rom" >> "$LOG" 2>&1
 	;;

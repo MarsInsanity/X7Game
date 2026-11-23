@@ -261,35 +261,44 @@
 	r36s-keys {
 		compatible = "gpio-keys-polled";
 		poll-interval = <20>;
+		/* debounce-interval 0 on every key: with the driver's 5 ms default it
+		 * skipped the poll after each change, so a release or a quick second
+		 * press came a poll late. Contact bounce lasts a few ms, well under
+		 * the 20 ms between samples, so it cannot cause a false toggle. */
 
 		key-l2 {
 			label = "L2";
 			linux,code = <0x138>;
 			gpios = <&gpio 0x07 1>;
+			debounce-interval = <0>;
 		};
 
 		key-r2 {
 			label = "R2";
 			linux,code = <0x139>;
 			gpios = <&gpio 0x0b 1>;
+			debounce-interval = <0>;
 		};
 
 		key-volup {
 			label = "VOL+";
 			linux,code = <0x73>;
 			gpios = <&gpio 0x0d 1>;
+			debounce-interval = <0>;
 		};
 
 		key-voldown {
 			label = "VOL-";
 			linux,code = <0x72>;
 			gpios = <&gpio 0x0c 1>;
+			debounce-interval = <0>;
 		};
 
 		key-fn {
 			label = "FN";
 			linux,code = <0x13c>;
 			gpios = <&gpio 0x02 1>;
+			debounce-interval = <0>;
 		};
 	};
 

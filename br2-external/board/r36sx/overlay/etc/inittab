@@ -9,9 +9,11 @@
 ::sysinit:/bin/hostname -F /etc/hostname
 ::sysinit:/etc/init.d/rcS
 
-# The hardware monitor (power button, volume keys, charger, headphones, TF2;
-# every event goes to /run/x7-events.log) and the virtual gamepad the
-# emulators use (x7-padd, "X7 Game Gamepad").
+# The hardware monitor (power button, volume keys, charger, headphones, TF2)
+# and the virtual gamepad the emulators use (x7-padd, "X7 Game Gamepad").
+# The monitor's output is the event log, /run/x7-events.log; what it prints
+# is thrown away (the screen belongs to the game list). x7-padd's messages
+# go to /run/x7-padd.log.
 ::respawn:/usr/bin/x7-hwmon > /dev/null 2>&1
 ::respawn:/usr/sbin/x7-padd > /dev/null 2>> /run/x7-padd.log
 

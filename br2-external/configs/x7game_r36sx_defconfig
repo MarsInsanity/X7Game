@@ -12,8 +12,12 @@ BR2_mips_32r2=y
 # reliable), FP mode xx (works with FR=0 and FR=1 kernels)
 # BR2_MIPS_SOFT_FLOAT is not set
 BR2_MIPS_FP32_MODE_XX=y
-# Buildroot has no 74Kc entry: MIPS32r2, tuned for the 74K pipeline
-BR2_TARGET_OPTIMIZATION="-mtune=74kc"
+# Buildroot has no 74K entry: MIPS32r2, tuned for the 74K pipeline with its
+# hardware FPU, which runs at half the core clock (Config7: core:FPU 2:1).
+# GCC's "74kc" means a 74K without an FPU (every FP operation costed like a
+# library call, no FPU pipeline model); "74kf2_1" is this core. Tuning only:
+# the instruction set stays MIPS32r2.
+BR2_TARGET_OPTIMIZATION="-mtune=74kf2_1"
 BR2_OPTIMIZE_2=y
 
 # --- Toolchain: Buildroot's own, glibc (the libc Batocera/Recalbox-style
@@ -54,9 +58,6 @@ BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/
 # the bootloader starts our own container (post-image.sh / mkx7boot.py)
 BR2_LINUX_KERNEL_VMLINUX=y
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
-# the kernel's "all" target on MIPS_GENERIC also makes vmlinux.gz.itb (unused)
-BR2_PACKAGE_HOST_UBOOT_TOOLS=y
-BR2_PACKAGE_HOST_UBOOT_TOOLS_FIT_SUPPORT=y
 
 # --- Packages ---
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/busybox.fragment"
@@ -64,6 +65,8 @@ BR2_PACKAGE_ALSA_UTILS=y
 BR2_PACKAGE_ALSA_UTILS_AMIXER=y
 BR2_PACKAGE_ALSA_UTILS_APLAY=y
 BR2_PACKAGE_ALSA_UTILS_SPEAKER_TEST=y
+# libatopology is only for alsatplg (not built)
+# BR2_PACKAGE_ALSA_LIB_TOPOLOGY is not set
 # the data partition (X7DATA): exFAT by default, FAT32 on request
 BR2_PACKAGE_EXFATPROGS=y
 BR2_PACKAGE_DOSFSTOOLS=y
@@ -88,12 +91,17 @@ BR2_PACKAGE_LIBRETRO_HANDY=y
 BR2_PACKAGE_LIBRETRO_FBALPHA2012_CPS1=y
 BR2_PACKAGE_LIBRETRO_FBALPHA2012_CPS2=y
 BR2_PACKAGE_LIBRETRO_FBALPHA2012_NEOGEO=y
+# PlayStation: standalone PCSX4All (gameblabla RG350 fork + the X7 port)
+BR2_PACKAGE_PCSX4ALL=y
 
 # --- Images: a squashfs root; post-image.sh builds the SD card image ---
 BR2_TARGET_ROOTFS_SQUASHFS=y
-BR2_TARGET_ROOTFS_SQUASHFS4_GZIP=y
+# LZ4 with -Xhc (128K blocks): the image is a little bigger than gzip, but each
+# block read from the SD card costs several times less CPU to decompress
+# (the kernel has CONFIG_SQUASHFS_LZ4, linux-x7.fragment)
+BR2_TARGET_ROOTFS_SQUASHFS4_LZ4=y
+BR2_TARGET_ROOTFS_SQUASHFS_EXTREME_COMP=y
 # BR2_TARGET_ROOTFS_TAR is not set
 BR2_PACKAGE_HOST_DTC=y
-BR2_PACKAGE_HOST_GENIMAGE=y
 BR2_PACKAGE_HOST_DOSFSTOOLS=y
 BR2_PACKAGE_HOST_MTOOLS=y

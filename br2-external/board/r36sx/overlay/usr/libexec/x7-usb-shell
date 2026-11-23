@@ -35,8 +35,9 @@ stty sane 2>/dev/null
 echo "shell started on $TTY (pid $$, $(cut -d' ' -f1 /proc/uptime) s)" > "$STATE"
 echo
 echo "X7 Game - root shell on the USB cable."
-echo "  x7-status       hardware state      tail -f /run/x7-events.log  live events"
+echo "  x7-status       hardware state      x7-console     state + live events"
 echo "  x7-soundtest    play a test sound   x7-colortest   colour test on the screen"
 echo "  x7-tf2-probe    find TF2's wiring   poweroff       switch the console off"
 echo "  x7-update       install an update (x7-update --status, --rollback)"
+echo "  x7-report       diagnostic report (as in x7game/logs/boot.log on the SD card)"
 exec /bin/sh -l

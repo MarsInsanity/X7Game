@@ -1,15 +1,34 @@
-# X7 Game additions to Buildroot's default BusyBox configuration.
-CONFIG_GETTY=y
-CONFIG_SETSID=y
-CONFIG_MOUNTPOINT=y
+# X7 Game changes to Buildroot's default BusyBox configuration
+# (package/busybox/busybox.config).
+
+# Turned off. getty: x7-usb-shell opens ttyGS0 itself. crond and crontab:
+# the root is read-only, so there can never be a crontab, yet crond would
+# wake up every minute. klogd: it only copies the kernel log, which dmesg
+# (and x7-report) already show, into syslog. Without crond and klogd
+# Buildroot also leaves out their start scripts (S50crond, S02klogd).
+# syslogd stays: init's respawn messages go only to syslog, and x7-report
+# saves them.
+# CONFIG_GETTY is not set
+# CONFIG_CROND is not set
+# CONFIG_CRONTAB is not set
+# CONFIG_KLOGD is not set
+
+# Added: timeout (x7-soundtest) and conveniences for the USB shell.
 CONFIG_TIMEOUT=y
-CONFIG_BLOCKDEV=y
-CONFIG_FEATURE_FANCY_TAIL=y
 CONFIG_FEATURE_VI_REGEX_SEARCH=y
 CONFIG_FEATURE_TOP_DECIMALS=y
 CONFIG_PSTREE=y
+
+# Already on in Buildroot's default: these lines pin applets that the X7
+# scripts and tools need, so that a change of the default cannot drop them.
+# setsid (x7-usb-shell), mountpoint (S05x7data, x7-update, x7-usb-gadget,
+# x7-launch), pidof (x7-launch, S90x7games), devmem (reads SoC registers,
+# e.g. over the USB shell).
+CONFIG_SETSID=y
+CONFIG_MOUNTPOINT=y
+CONFIG_PIDOF=y
 CONFIG_DEVMEM=y
-# x7-update
+# x7-update: tar, sha256sum, cmp, head -c, dd conv=
 CONFIG_TAR=y
 CONFIG_SHA256SUM=y
 CONFIG_CMP=y

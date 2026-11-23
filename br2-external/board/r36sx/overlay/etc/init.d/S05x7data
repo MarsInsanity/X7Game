@@ -52,6 +52,18 @@ start)
 		say "the data partition is NTFS, which X7 Game can't use: left alone (reformat it as exFAT on a PC)"
 		exit 0
 	fi
+	# A file system signature that fails x7-datapart's checks, or a damaged
+	# exFAT boot sector whose backup is good (a power cut while the exfat
+	# driver rewrote it): somebody's data, also after a re-flash, when
+	# partition 2 is missing. Don't format it, add it to the partition table
+	# or mount it.
+	if test "$fs" = unknown; then
+		msg="X7DATA holds a file system X7 Game does not recognise or that is damaged: left alone (check it on a PC)"
+		say "$msg"
+		echo "<4>x7game: $msg" > /dev/kmsg
+		exit 0
+	fi
+	note=
 	case "$fs" in
 	none)
 		if test "${data_filesystem:-exfat}" = fat32; then
@@ -78,6 +90,24 @@ start)
 				echo "X7 Game: kept the data partition already on this card (partition table entry restored)"
 				echo "<5>x7game: existing data partition adopted ($fs)" > /dev/kmsg
 			fi
+		elif test "$entry2" = ours &&
+		     test $((fs_sectors <= card_sectors - START)) = 1 &&
+		     cap=$((4294967295 - START)) &&
+		     test $(((fs_sectors < cap ? fs_sectors : cap) > entry2_sectors)) = 1; then
+			# Earlier builds wrote partition 2 rounded down to whole MiB,
+			# up to 1 MiB shorter than the file system mkfs made on all of
+			# $PART, so a PC may refuse X7DATA. x7-datapart extends the
+			# entry to the file system's size (it checks all this again
+			# and logs the change); only the length changes. The MBR
+			# can't describe more than 2 TiB: past that, the capped length
+			# is what x7-datapart writes, so compare with that.
+			if /usr/sbin/x7-datapart fix-length "$DEV" "$START" > /dev/null; then
+				echo "X7 Game: the data partition's partition table entry now covers its whole file system"
+				note=" (partition table entry extended to the whole file system)"
+			else
+				echo "<4>x7game: X7DATA partition entry could not be extended" > /dev/kmsg
+				note=" (partition table entry is shorter than the file system and could not be extended: a PC may not mount it)"
+			fi
 		fi
 		;;
 	esac
@@ -87,7 +117,7 @@ start)
 		mount -t vfat -o rw,noatime,utf8,umask=022,flush "$PART" "$MNT" 2>/dev/null
 	fi
 	if ! mountpoint -q "$MNT"; then
-		say "could not mount the data partition ($fs)"
+		say "could not mount the data partition ($fs)$note"
 		exit 0
 	fi
 	# the folder layout (RecalBox names); existing folders are left alone
@@ -99,7 +129,7 @@ start)
 	if test -n "$created"; then
 		say "X7DATA created ($fs, $gib GiB), mounted at $MNT"
 	else
-		echo "X7DATA ($fs) mounted at $MNT" > "$STATE"
+		echo "X7DATA ($fs) mounted at $MNT$note" > "$STATE"
 	fi
 	;;
 stop)

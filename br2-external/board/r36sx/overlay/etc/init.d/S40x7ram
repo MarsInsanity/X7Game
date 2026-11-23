@@ -3,17 +3,37 @@
 # (about 79 MiB). The AVP is replaced by a stand-in on the SD card; the
 # nzeus-ram driver checks for 10 s that nothing writes that memory before it
 # releases it, so this runs in the background after start-up.
+# /run/x7-ram.state tells x7-launch how far it got, so a game started in the
+# meantime can wait for the memory: none (no driver), pending, released or
+# refused.
 test "$1" = start || exit 0
-D=$(ls -d /sys/bus/platform/devices/*avp-free-ram 2>/dev/null | head -n 1)
-test -n "$D" || exit 0
+S=/run/x7-ram.state
+for D in /sys/bus/platform/devices/*avp-free-ram; do break; done
+if ! test -e "$D"; then
+	echo none > "$S"
+	exit 0
+fi
+echo pending > "$S"
 (
 	sleep 3
-	case "$(cat "$D/release" 2>/dev/null)" in RELEASED*) exit 0 ;; esac
+	case "$(cat "$D/release" 2>/dev/null)" in RELEASED*) echo released > "$S"; exit 0 ;; esac
 	before=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
 	if echo release > "$D/release" 2>/dev/null; then
 		after=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
-		echo "<5>x7game: AVP memory given to Linux (MemTotal $before -> $after KiB)" > /dev/kmsg
+		# The kernel sized min_free_kbytes (and with it the page allocator's
+		# watermarks) for the ~38 MiB it had at boot, and nothing redoes that
+		# when memory is added this way. Writing it makes the kernel
+		# recompute them; the value is the kernel's own formula,
+		# sqrt(KiB * 16), as an integer Newton loop because this BusyBox awk
+		# has no sqrt().
+		awk '/^MemTotal:/ { n = $2 * 16; x = n; while (x * x > n) x = int((x + n / x) / 2); print x }' \
+			/proc/meminfo > /proc/sys/vm/min_free_kbytes
+		mfk=
+		read -r mfk < /proc/sys/vm/min_free_kbytes
+		echo released > "$S"
+		echo "<5>x7game: AVP memory given to Linux (MemTotal $before -> $after KiB, min_free_kbytes $mfk)" > /dev/kmsg
 	else
+		echo refused > "$S"
 		echo "<4>x7game: AVP memory not released (AVP running?), MemTotal $before KiB" > /dev/kmsg
 	fi
 ) > /dev/null 2>&1 &

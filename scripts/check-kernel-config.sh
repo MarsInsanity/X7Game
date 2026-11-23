@@ -4,7 +4,9 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FRAGMENT=$ROOT/br2-external/board/r36sx/linux-x7.fragment
-config=$(ls -d "$1"/build/linux-*/.config 2>/dev/null | grep -v headers | head -n 1)
+# "|| true": with pipefail an empty match would abort here, before the
+# message below; filter on the directory name, not on the whole path
+config=$(ls -d "$1"/build/linux-*/.config 2>/dev/null | grep -v '/linux-headers-' | head -n 1 || true)
 [ -f "$config" ] || { echo "no kernel .config under $1/build"; exit 1; }
 bad=0
 while IFS= read -r line; do

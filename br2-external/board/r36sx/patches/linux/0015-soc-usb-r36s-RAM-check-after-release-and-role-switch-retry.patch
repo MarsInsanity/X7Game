@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sun, 22 Nov 2026 14:14:37 -0800
+Subject: [PATCH] soc/usb: r36s: RAM check after release and role switch retry
+ (X7 Game)
+
+nzeus-ram: avp_check hashed the AVP's areas even after release had given
+them to the page allocator. Linux itself writes those pages then, so the
+read blocked for 10 s and then usually said CHANGED / AVP_RUNNING, the
+opposite of the truth. Once the region is released it now answers
+"RELEASED: region now owned by Linux, check not meaningful" at once.
+
+musb hc16xx: hc16xx_add_core() leaves a core that did not start
+registered (glue->musb_pdev set, glue->musb NULL), and hc16xx_role_set()
+removed it only when the requested mode was host. After a failed switch
+to peripheral, or a failed peripheral fallback after a failed host
+switch, the next write of "device" hit the early-out, returned 0 and
+changed nothing: no UDC, no USB shell. Now every failed add_core() is
+followed by hc16xx_del_core(), the fallback's result is checked, and the
+early-out needs a started core (glue->musb), so writing the role again
+really retries. A failed host switch still returns its error to the
+writer, also when the fallback failed too (then no core is left until
+the next role write).
+
+After a role round trip the configfs gadget comes back by itself only if
+the re-created core gets the same musb-hdrc.N.auto UDC name again;
+otherwise userspace has to bind it to the new UDC. That is not part of
+this patch.
+---
+ drivers/soc/nzeus-ram.c   | 11 +++++++++++
+ drivers/usb/musb/hc16xx.c | 31 ++++++++++++++++++++++++-------
+ 2 files changed, 35 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/soc/nzeus-ram.c b/drivers/soc/nzeus-ram.c
+index 60d2a9352..3574d118c 100644
+--- a/drivers/soc/nzeus-ram.c
++++ b/drivers/soc/nzeus-ram.c
+@@ -17,6 +17,8 @@
+  *                 twice, 10 s apart. STATIC = nothing wrote them = AVP not
+  *                 running. Run it once with the AVP present: it must say
+  *                 AVP_RUNNING, which proves the check can see the firmware.
++ *                 After release it only says RELEASED (X7 Game): Linux then
++ *                 owns and writes these pages, so a hash means nothing.
+  *   mirror_check  reads the live jiffies counter and a block of kernel text
+  *                 at X and X + 128 MiB through KSEG1 (0xA0000000 window).
+  *   release       write "release": runs avp_check again and only if STATIC
+@@ -165,6 +167,15 @@ static ssize_t avp_check_show(struct device *dev, struct device_attribute *attr,
+ 	bool quiet;
+ 
+ 	mutex_lock(&r->lock);
++	if (r->released) {
++		/*
++		 * The page allocator hands these pages out now: Linux itself
++		 * writes them, so the hash would say CHANGED/AVP_RUNNING (after
++		 * a 10 s wait) whatever the AVP does. Don't hash.
++		 */
++		mutex_unlock(&r->lock);
++		return sysfs_emit(buf, "RELEASED: region now owned by Linux, check not meaningful\n");
++	}
+ 	quiet = avp_static(buf, &len);
+ 	len += sysfs_emit_at(buf, len, "%s\n", quiet ? "AVP_NOT_RUNNING" : "AVP_RUNNING");
+ 	mutex_unlock(&r->lock);
+diff --git a/drivers/usb/musb/hc16xx.c b/drivers/usb/musb/hc16xx.c
+index 0788baead..dfa512600 100644
+--- a/drivers/usb/musb/hc16xx.c
++++ b/drivers/usb/musb/hc16xx.c
+@@ -29,6 +29,10 @@
+  *    reached .init) makes the glue probe return -EPROBE_DEFER, not a hard
+  *    error, so it is probed again and the USB rescue gadget still appears
+  *    (the original glue never waited for the core to bind).
++ *
++ * X7 Game: a role switch whose new core does not start removes that core
++ * again (also in peripheral mode and for the fallback), so writing the role
++ * again really retries; before, it returned 0 and changed nothing.
+  */
+ 
+ #include <linux/clk.h>
+@@ -463,7 +467,7 @@ static int hc16xx_role_set(struct usb_role_switch *sw, enum usb_role role)
+ {
+ 	struct hc16xx_glue *glue = usb_role_switch_get_drvdata(sw);
+ 	u8 mode;
+-	int ret = 0;
++	int ret = 0, err;
+ 
+ 	switch (role) {
+ 	case USB_ROLE_HOST:
+@@ -478,19 +482,32 @@ static int hc16xx_role_set(struct usb_role_switch *sw, enum usb_role role)
+ 	}
+ 
+ 	mutex_lock(&glue->lock);
+-	if (mode == glue->mode && glue->musb_pdev)
++	/* a started core only: glue->musb is set by .init, cleared by .exit */
++	if (mode == glue->mode && glue->musb_pdev && glue->musb)
+ 		goto out;
+ 
+ 	dev_info(glue->dev, "role switch: %s -> %s (re-creating the MUSB core)\n",
+ 		 hc16xx_mode_name(glue->mode), hc16xx_mode_name(mode));
+ 	hc16xx_del_core(glue);
+ 	ret = hc16xx_add_core(glue, mode);
+-	if (ret && mode != MUSB_PERIPHERAL) {
+-		dev_err(glue->dev, "%s core failed (%d): back to peripheral\n",
+-			hc16xx_mode_name(mode), ret);
++	if (ret) {
++		/*
++		 * A core that did not start is still registered (unbound, or on
++		 * the deferred-probe list). Remove it, as probe does, so that
++		 * musb_pdev is NULL and the next write of the same role really
++		 * tries again instead of returning 0 with no core running.
++		 */
+ 		hc16xx_del_core(glue);
+-		if (hc16xx_add_core(glue, MUSB_PERIPHERAL))
+-			dev_err(glue->dev, "peripheral core failed too\n");
++		if (mode != MUSB_PERIPHERAL) {
++			dev_err(glue->dev, "%s core failed (%d): back to peripheral\n",
++				hc16xx_mode_name(mode), ret);
++			err = hc16xx_add_core(glue, MUSB_PERIPHERAL);
++			if (err) {
++				dev_err(glue->dev, "peripheral core failed too (%d): no MUSB core until a role is written again\n",
++					err);
++				hc16xx_del_core(glue);
++			}
++		}
+ 	}
+ 	/* -EPROBE_DEFER is kernel-internal; the sysfs writer gets "try again" */
+ 	if (ret == -EPROBE_DEFER)

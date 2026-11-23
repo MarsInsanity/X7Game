@@ -1,0 +1,2694 @@
+Add the X7 Game (R36SX) port and Makefile.r36sx
+
+src/port/r36sx: no SDL. Video straight to /dev/fb0 at 640x480 RGB565, the
+PS1 picture scaled to fill the screen (exact 2x for 320x240, nearest
+neighbour otherwise), written with sequential 32-bit stores (the
+framebuffer is uncached); the menu (320x240) is shown doubled. Buttons from
+the "X7 Game Gamepad" evdev device (B = Cross, A = Circle, X = Triangle,
+Y = Square, L1/R1/L2/R2, SELECT, START, D-pad; FN = menu, and FN in the
+menu = straight back to the game), raw button devices until the virtual
+pad shows up. The menu sleeps in poll() while no button is pressed. Sound
+through spu_pcsxrearmed's ALSA driver. BIOS in /share/bios (HLE when
+none), memory cards and save states in /share/saves/psx, settings in
+/share/system/pcsx4all. SIGTERM/SIGINT: a memory card save in progress may
+finish (up to 2 s), then memory cards flushed, screen and console
+restored, clean exit; a 4 s watchdog forces it.
+diff --git a/Makefile.r36sx b/Makefile.r36sx
+new file mode 100644
+index 0000000..83240d2
+--- /dev/null
++++ b/Makefile.r36sx
+@@ -0,0 +1,188 @@
++#########################################################################
++## PCSX4ALL for X7 Game on the R36SX (HiChip E3100: one MIPS 74Kc core,
++## MIPS32r2, hard-float, little-endian; no GPU; 640x480 framebuffer)
++##
++## No SDL: src/port/r36sx writes /dev/fb0 (RGB565, the PS1 picture scaled
++## to 640x480), reads the "X7 Game Gamepad" evdev device and plays sound
++## through ALSA (spu_pcsxrearmed's alsa driver). gpu_unai with gpulib,
++## spu_pcsxrearmed, the MIPS dynarec, CHD through libchdr (src/libchdr).
++##
++## Cross-compile:  make -f Makefile.r36sx CC=... CXX=...
++## (CC/CXX/LD/CFLAGS come from the environment or the command line.)
++#########################################################################
++
++TARGET = pcsx4all
++PORT   = r36sx
++GPU    = gpu_unai
++SPU    = spu_pcsxrearmed
++RECOMPILER ?= mips
++SUPPORT_CHD ?= 1
++
++CC  ?= gcc
++CXX ?= g++
++LD  := $(CXX)
++RM   = rm -f
++MD   = mkdir -p
++
++# If V=1 was passed to 'make', don't hide commands:
++ifeq ($(V),1)
++	HIDECMD :=
++else
++	HIDECMD := @
++endif
++
++OPT ?= -O2
++
++# MIPS32r2 for the 74Kc. No DSP ASE (-mdsp/-mdspr2): not verified on this
++# chip. FP mode stays the toolchain default (FPXX).
++# -mno-check-zero-division: as in the upstream release builds (faster
++#  software rendering; PS1 code never reaches a host division by zero).
++# -mplt -mno-shared -fno-pie / -no-pie: a non-PIC executable at the usual
++#  0x400000: the dynarec's code buffer (.bss) and the C code it calls must
++#  share one 256 MiB J/JAL region, and it maps PS1 memory at the fixed
++#  addresses 0x10000000 and 0x20000000 (see recompiler/mips/mem_mapping.h).
++ifeq ($(RECOMPILER),mips)
++C_ARCH = -mips32r2 -mtune=74kc -mno-check-zero-division -mplt -mno-shared
++endif
++C_ARCH += -fno-pie
++
++CFLAGS += $(C_ARCH) $(OPT) -fno-strict-aliasing -fcommon \
++	-Wall -Wno-sign-compare -Wno-cast-align -Wno-unused-variable \
++	-Wno-unused-function -Wno-unused-but-set-variable \
++	-Isrc -Isrc/spu/$(SPU) -D$(SPU) -Isrc/gpu/$(GPU) \
++	-Isrc/port/$(PORT) \
++	-Isrc/plugin_lib \
++	-Isrc/external_lib -Isrc/port/common \
++	-DR36SX -DNO_SDL -DNO_HWSCALE -DNOJOYSTICK_AVAILABLE -DTIME_IN_MSEC \
++	-D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 \
++	-DXA_HACK \
++	-DINLINE="static __inline__" -Dasm="__asm__ __volatile__"
++
++# Convert plugin names to uppercase and make them CFLAG defines
++CFLAGS += -D$(shell echo $(GPU) | tr a-z A-Z)
++CFLAGS += -D$(shell echo $(SPU) | tr a-z A-Z)
++
++ifdef RECOMPILER
++CFLAGS += -DPSXREC -D$(RECOMPILER)
++# PS1 RAM (2 MiB) and the block table (2 MiB) are mapped/mirrored at fixed
++# addresses through a tmpfs file: POSIX shared memory in /dev/shm (default,
++# MIRRORING=shm) or a file in /tmp (MIRRORING=tmp). Up to 4 MiB of that
++# tmpfs is used while the game runs; when it is full, the emulator dies of
++# SIGBUS.
++MIRRORING ?= shm
++ifeq ($(MIRRORING),tmp)
++CFLAGS += -DTMPFS_MIRRORING '-DTMPFS_DIR="/tmp"'
++else
++CFLAGS += -DSHMEM_MIRRORING
++endif
++endif
++
++# GCC 14 turned these old-C warnings into errors
++CFLAGS_C = -Wno-error=implicit-function-declaration \
++	-Wno-error=incompatible-pointer-types -Wno-error=int-conversion \
++	-Wno-error=implicit-int
++ifneq ($(shell $(CC) -Wno-error=return-mismatch -E -x c /dev/null -o /dev/null 2>/dev/null && echo y),)
++CFLAGS_C += -Wno-error=return-mismatch
++endif
++
++LDFLAGS += -no-pie -Wl,--as-needed
++LIBS = -lasound -lz -lrt -lpthread -lm
++
++OBJDIRS = obj obj/gpu obj/gpu/$(GPU) obj/gpu/gpulib obj/spu obj/spu/$(SPU) \
++	  obj/port obj/port/$(PORT) \
++	  obj/plugin_lib obj/external_lib obj/port/common
++
++all: maketree $(TARGET)
++
++OBJS = \
++	obj/r3000a.o obj/misc.o obj/plugins.o obj/psxmem.o obj/psxhw.o \
++	obj/psxcounters.o obj/psxdma.o obj/psxbios.o obj/psxhle.o obj/psxevents.o \
++	obj/psxcommon.o \
++	obj/plugin_lib/plugin_lib.o obj/plugin_lib/pl_sshot.o \
++	obj/plugin_lib/perfmon.o \
++	obj/psxinterpreter.o \
++	obj/mdec.o obj/decode_xa.o \
++	obj/cdriso.o obj/cdrom.o obj/ppf.o obj/cheat.o \
++	obj/sio.o obj/pad.o obj/gte.o \
++	obj/external_lib/ioapi.o obj/external_lib/unzip.o \
++	obj/port/common/frontend.o obj/port/common/cdrom_hacks.o
++
++ifdef RECOMPILER
++OBJDIRS += obj/recompiler obj/recompiler/$(RECOMPILER)
++OBJS += \
++	obj/recompiler/mips/recompiler.o \
++	obj/recompiler/mips/host_asm.o \
++	obj/recompiler/mips/mem_mapping.o \
++	obj/recompiler/mips/mips_codegen.o \
++	obj/recompiler/mips/mips_disasm.o
++endif
++
++# GPULIB from PCSX Rearmed with gpu_unai; the video output (vout_*) is the
++# port's own (src/port/r36sx/vout_x7.c) instead of gpulib/vout_port.c
++CFLAGS += -DUSE_GPULIB
++OBJS += obj/gpu/$(GPU)/gpulib_if.o obj/gpu/gpulib/gpu.o
++
++# Port: main, settings, buttons, screen
++OBJS += obj/port/$(PORT)/port.o obj/port/$(PORT)/x7_hw.o obj/port/$(PORT)/vout_x7.o
++
++# spu_pcsxrearmed with the ALSA output ("default" PCM, or $ALSA_NAME)
++# SPU updates twice per frame and forced XA updates: fewer dropouts on a
++# slow CPU (as on the GCW Zero / RG350 builds)
++CFLAGS += -DSPU_UPDATE_FREQ_DEFAULT=1 -DFORCED_XA_UPDATES_DEFAULT=1
++OBJS += obj/spu/$(SPU)/spu.o obj/spu/$(SPU)/dma.o obj/spu/$(SPU)/freeze.o \
++	obj/spu/$(SPU)/out.o obj/spu/$(SPU)/nullsnd.o \
++	obj/spu/$(SPU)/registers.o obj/spu/$(SPU)/alsa.o
++obj/spu/$(SPU)/out.o: CFLAGS += -DHAVE_ALSA
++
++ifeq ($(SUPPORT_CHD),1)
++OBJDIRS += obj/libchdr obj/libchdr/deps/lzma-19.00/src obj/libchdr/src
++CFLAGS += -DHAVE_CHD -D_7ZIP_ST -Isrc/libchdr/include/libchdr \
++	-Isrc/libchdr/include/dr_libs -Isrc/libchdr/include \
++	-Isrc/libchdr/deps/lzma-19.00/include
++OBJS += obj/libchdr/src/libchdr_bitstream.o obj/libchdr/src/libchdr_cdrom.o \
++	obj/libchdr/src/libchdr_chd.o obj/libchdr/src/libchdr_flac.o \
++	obj/libchdr/src/libchdr_huffman.o
++OBJS += obj/libchdr/deps/lzma-19.00/src/Alloc.o \
++	obj/libchdr/deps/lzma-19.00/src/Bra86.o \
++	obj/libchdr/deps/lzma-19.00/src/BraIA64.o \
++	obj/libchdr/deps/lzma-19.00/src/CpuArch.o \
++	obj/libchdr/deps/lzma-19.00/src/Delta.o \
++	obj/libchdr/deps/lzma-19.00/src/LzFind.o \
++	obj/libchdr/deps/lzma-19.00/src/Lzma86Dec.o \
++	obj/libchdr/deps/lzma-19.00/src/LzmaDec.o \
++	obj/libchdr/deps/lzma-19.00/src/LzmaEnc.o \
++	obj/libchdr/deps/lzma-19.00/src/Sort.o
++endif
++
++CXXFLAGS += $(CFLAGS) -fno-rtti -fno-exceptions
++
++$(TARGET): $(OBJS)
++	@echo Linking $(TARGET)...
++	$(HIDECMD)$(LD) $(OBJS) -o $@ $(CXXFLAGS) $(LDFLAGS) $(LIBS)
++
++obj/%.o: src/%.c
++	@echo Compiling $<...
++	$(HIDECMD)$(CC) $(CFLAGS) $(CFLAGS_C) -c $< -o $@
++
++obj/%.o: src/%.cpp
++	@echo Compiling $<...
++	$(HIDECMD)$(CXX) $(CXXFLAGS) -c $< -o $@
++
++obj/%.o: src/%.S
++	@echo Compiling $<...
++	$(HIDECMD)$(CC) $(CFLAGS) -c $< -o $@
++
++obj/%.o: src/%.s
++	@echo Compiling $<...
++	$(HIDECMD)$(CC) $(CFLAGS) -c $< -o $@
++
++$(sort $(OBJDIRS)):
++	$(HIDECMD)$(MD) $@
++
++maketree: $(sort $(OBJDIRS))
++
++clean:
++	$(RM) -r obj
++	$(RM) $(TARGET)
++
++.PHONY: all maketree clean
+diff --git a/src/port/r36sx/port.c b/src/port/r36sx/port.c
+new file mode 100644
+index 0000000..ec305b2
+--- /dev/null
++++ b/src/port/r36sx/port.c
+@@ -0,0 +1,1483 @@
++/*
++ * PCSX4ALL port for X7 Game on the R36SX (HiChip E3100: one MIPS 74Kc core
++ * at 900 MHz, no GPU, 640x480 screen). Based on src/port/sdl/port.c, with
++ * SDL replaced by x7_hw.c (fbdev, evdev, signals) and vout_x7.c (scaling);
++ * audio is the spu_pcsxrearmed ALSA driver.
++ *
++ *   pcsx4all [options] -iso <disc image>     (or just: pcsx4all <disc image>)
++ *
++ * Buttons: B = Cross, A = Circle, X = Triangle, Y = Square, L1/R1/L2/R2,
++ * SELECT, START, D-pad. FN opens the menu (D-pad, A = confirm, B = back,
++ * FN = back to the game; "Quit" returns to the game list).
++ *
++ * Paths (directories are created as needed):
++ *   BIOS            $PCSX4ALL_BIOS_DIR   (default /share/bios)
++ *   memory cards    $PCSX4ALL_SAVE_DIR/memcards (default /share/saves/psx)
++ *   save states     $PCSX4ALL_SAVE_DIR/states
++ *   settings        $PCSX4ALL_CONFIG_DIR/pcsx4all.cfg (/share/system/pcsx4all)
++ *   cheats, PPF     $PCSX4ALL_CONFIG_DIR/cheats, .../patches
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <dirent.h>
++#include <errno.h>
++#include <unistd.h>
++#include <strings.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++
++#include "port.h"
++#include "r3000a.h"
++#include "plugins.h"
++#include "plugin_lib.h"
++#include "perfmon.h"
++#include "cheat.h"
++#include "cdrom_hacks.h"
++#include "sio.h"
++#include "x7_hw.h"
++
++#ifdef SPU_PCSXREARMED
++#include "spu/spu_pcsxrearmed/spu_config.h"		// To set spu-specific configuration
++#endif
++
++// New gpulib from Notaz's PCSX Rearmed handles duties common to GPU plugins
++#ifdef USE_GPULIB
++#include "gpu/gpulib/gpu.h"
++#endif
++
++#ifdef GPU_UNAI
++#include "gpu/gpu_unai/gpu.h"
++#endif
++
++enum {
++	DKEY_SELECT = 0,
++	DKEY_L3,
++	DKEY_R3,
++	DKEY_START,
++	DKEY_UP,
++	DKEY_RIGHT,
++	DKEY_DOWN,
++	DKEY_LEFT,
++	DKEY_L2,
++	DKEY_R2,
++	DKEY_L1,
++	DKEY_R1,
++	DKEY_TRIANGLE,
++	DKEY_CIRCLE,
++	DKEY_CROSS,
++	DKEY_SQUARE,
++
++	DKEY_TOTAL
++};
++
++/* frontend.c's menu key bits */
++enum {
++	MKEY_UP = 0x1, MKEY_LEFT = 0x4, MKEY_DOWN = 0x10, MKEY_RIGHT = 0x40,
++	MKEY_START = 1 << 8, MKEY_SELECT = 1 << 9, MKEY_L = 1 << 10, MKEY_R = 1 << 11,
++	MKEY_A = 1 << 12, MKEY_B = 1 << 13, MKEY_X = 1 << 14, MKEY_Y = 1 << 15,
++};
++
++/* the menu canvas (cached RAM), shown doubled by video_flip() */
++static uint16_t menu_canvas[320 * 240] __attribute__((aligned(32)));
++unsigned short *SCREEN = menu_canvas;
++int SCREEN_WIDTH = 320, SCREEN_HEIGHT = 240;
++
++static uint_fast8_t pcsx4all_initted = false;
++static uint_fast8_t emu_running = false;
++static uint_fast8_t hle_forced = false;  /* HLE only because no BIOS was found */
++void config_load();
++void config_save();
++void update_window_size(int w, int h, uint_fast8_t ntsc_fix);
++
++static void pcsx4all_exit(void)
++{
++	if (pcsx4all_initted == true) {
++		// Flush, sync and close memory card files opened for writing
++		sioSyncMcds();
++		// unload cheats
++		cheat_unload();
++	}
++
++	// Store config to file
++	config_save();
++
++	// The screen and the console go back to the game list first, in case
++	//  the plugin shutdown below goes wrong
++	x7_video_restore();
++	x7_input_shutdown();
++
++	if (pcsx4all_initted == true) {
++		ReleasePlugins();
++		psxShutdown();
++	}
++	fflush(stdout);
++}
++
++/* exit cleanly (memory cards, settings, screen: see pcsx4all_exit()) */
++static void quit_now(void)
++{
++	printf("Quit requested, exiting.\n");
++	exit(0);
++}
++
++/* SIGTERM & co (power-off): exit, but let a game that is writing a memory
++ * card finish its save first, for up to 2 s (the signal handler's watchdog
++ * forces the exit after 4 s, X7 Game's shutdown waits 5 s) */
++#define QUIT_MCD_GRACE_MS 2000
++
++static void check_quit(void)
++{
++	static unsigned int quit_since = 0;
++	unsigned int now;
++
++	if (!x7_quit_requested())
++		return;
++	now = x7_ticks_ms() | 1;
++	if (!quit_since) {
++		quit_since = now;
++		if (sioMcdBusy())
++			printf("Quit requested while a memory card is being written: "
++			       "waiting for the save to finish\n");
++	}
++	if (!sioMcdBusy() || (unsigned int)(now - quit_since) >= QUIT_MCD_GRACE_MS)
++		quit_now();
++}
++
++static char McdPath1[MAXPATHLEN] = "";
++static char McdPath2[MAXPATHLEN] = "";
++static char BiosFile[MAXPATHLEN] = "";
++
++static char homedir[MAXPATHLEN];
++static char savedir[MAXPATHLEN];
++static char memcardsdir[MAXPATHLEN];
++static char biosdir[MAXPATHLEN];
++static char patchesdir[MAXPATHLEN];
++char sstatesdir[MAXPATHLEN];
++char cheatsdir[MAXPATHLEN];
++
++/* mkdir -p */
++static void make_dirs(const char *path)
++{
++	char tmp[MAXPATHLEN];
++	char *p;
++
++	snprintf(tmp, sizeof(tmp), "%s", path);
++	for (p = tmp + 1; *p; p++) {
++		if (*p == '/') {
++			*p = '\0';
++			mkdir(tmp, 0755);
++			*p = '/';
++		}
++	}
++	if (mkdir(tmp, 0755) < 0 && errno != EEXIST)
++		printf("Warning: cannot create directory %s: %s\n", tmp, strerror(errno));
++}
++
++static const char *env_or(const char *name, const char *def)
++{
++	const char *v = getenv(name);
++	return (v && *v) ? v : def;
++}
++
++static void setup_paths()
++{
++	snprintf(homedir, sizeof(homedir), "%s",
++		 env_or("PCSX4ALL_CONFIG_DIR", "/share/system/pcsx4all"));
++	snprintf(savedir, sizeof(savedir), "%s",
++		 env_or("PCSX4ALL_SAVE_DIR", "/share/saves/psx"));
++	snprintf(biosdir, sizeof(biosdir), "%s",
++		 env_or("PCSX4ALL_BIOS_DIR", "/share/bios"));
++
++	snprintf(sstatesdir, sizeof(sstatesdir), "%s/states", savedir);
++	snprintf(memcardsdir, sizeof(memcardsdir), "%s/memcards", savedir);
++	snprintf(patchesdir, sizeof(patchesdir), "%s/patches", homedir);
++	snprintf(cheatsdir, sizeof(cheatsdir), "%s/cheats", homedir);
++
++	make_dirs(homedir);
++	make_dirs(sstatesdir);
++	make_dirs(memcardsdir);
++	make_dirs(biosdir);
++	make_dirs(patchesdir);
++	make_dirs(cheatsdir);
++}
++
++static int dir_exists(const char *path)
++{
++	struct stat st;
++	return path && *path && stat(path, &st) == 0 && S_ISDIR(st.st_mode);
++}
++
++static void default_lastdir(void)
++{
++	const char *home = getenv("HOME");
++
++	if (dir_exists("/share/roms/psx"))
++		strcpy(Config.LastDir, "/share/roms/psx");
++	else if (dir_exists("/share/roms"))
++		strcpy(Config.LastDir, "/share/roms");
++	else if (dir_exists("/share"))
++		strcpy(Config.LastDir, "/share");
++	else if (dir_exists(home))
++		snprintf(Config.LastDir, sizeof(Config.LastDir), "%s", home);
++	else
++		strcpy(Config.LastDir, "/");
++}
++
++void probe_lastdir()
++{
++	if (!dir_exists(Config.LastDir))
++		default_lastdir();
++}
++
++/* Case-insensitive look-up of 'name' in the BIOS directory; a file of at
++ * least 512 KiB counts. */
++static int bios_present(const char *name)
++{
++	DIR *d;
++	struct dirent *e;
++	int found = 0;
++
++	if (string_is_empty(name) || !(d = opendir(Config.BiosDir)))
++		return 0;
++	while (!found && (e = readdir(d))) {
++		if (!strcasecmp(e->d_name, name)) {
++			char path[MAXPATHLEN * 2];
++			struct stat st;
++			snprintf(path, sizeof(path), "%s/%s", Config.BiosDir, e->d_name);
++			found = stat(path, &st) == 0 && S_ISREG(st.st_mode) &&
++				st.st_size >= 0x80000;
++		}
++	}
++	closedir(d);
++	return found;
++}
++
++/* BIOS files tried in this order when the configured one is missing */
++static const char *const known_bios[] = {
++	"scph1001.bin", "scph5501.bin", "scph7001.bin", "scph7501.bin",
++	"scph101.bin", "scph1000.bin", "scph3000.bin", "scph3500.bin",
++	"scph5000.bin", "scph5500.bin", "scph7000.bin", "scph7500.bin",
++	"scph9000.bin", "scph100.bin", "scph5502.bin", "scph5552.bin",
++	"scph7002.bin", "scph7502.bin", "scph9002.bin", "scph102.bin",
++	"scph1002.bin", "scph5002.bin", "psxonpsp660.bin", "ps1_rom.bin",
++	NULL
++};
++
++/* Real BIOS when one is in the BIOS directory, else the HLE BIOS for this
++ * run (without changing the saved setting). */
++static void choose_bios(void)
++{
++	int i;
++
++	hle_forced = false;
++	if (Config.HLE)
++		return;
++	if (bios_present(Config.Bios))
++		return;
++	for (i = 0; known_bios[i]; i++) {
++		if (bios_present(known_bios[i])) {
++			printf("BIOS %s not found, using %s\n", Config.Bios, known_bios[i]);
++			strcpy(Config.Bios, known_bios[i]);
++			return;
++		}
++	}
++	printf("No BIOS in %s (looked for %s, scph5501.bin, scph7001.bin, ...): "
++	       "using the HLE BIOS.\n", Config.BiosDir, Config.Bios);
++	Config.HLE = 1;
++	hle_forced = true;
++}
++
++#ifdef PSXREC
++extern uint32_t cycle_multiplier; // in mips/recompiler.cpp
++#endif
++
++static void config_path(char *buf, size_t size)
++{
++	snprintf(buf, size, "%s/pcsx4all.cfg", homedir);
++}
++
++void config_load()
++{
++	FILE *f;
++	char config[MAXPATHLEN + 16];
++	char line[MAXPATHLEN + 8 + 1];
++	int lineNum = 0;
++
++	config_path(config, sizeof(config));
++	f = fopen(config, "r");
++
++	if (f == NULL) {
++		printf("No config file \"%s\" yet, using defaults.\n", config);
++		return;
++	}
++
++	while (fgets(line, sizeof(line), f)) {
++		char *arg = strchr(line, ' ');
++		int value;
++
++		++lineNum;
++
++		if (!arg) {
++			continue;
++		}
++
++		*arg = '\0';
++		arg++;
++
++		if (lineNum == 1) {
++			if (!strcmp(line, "CONFIG_VERSION")) {
++				sscanf(arg, "%d", &value);
++				if (value == CONFIG_VERSION) {
++					continue;
++				} else {
++					printf("Incompatible config version for \"%s\"."
++					       "Required: %d. Found: %d. Ignoring.\n",
++					       config, CONFIG_VERSION, value);
++					break;
++				}
++			}
++
++			printf("Incompatible config format for \"%s\"."
++			       "Ignoring.\n", config);
++			break;
++		}
++
++		if (!strcmp(line, "Xa")) {
++			sscanf(arg, "%d", &value);
++			Config.Xa = value;
++		} else if (!strcmp(line, "Mdec")) {
++			sscanf(arg, "%d", &value);
++			Config.Mdec = value;
++		} else if (!strcmp(line, "PsxAuto")) {
++			sscanf(arg, "%d", &value);
++			Config.PsxAuto = value;
++		} else if (!strcmp(line, "Cdda")) {
++			sscanf(arg, "%d", &value);
++			Config.Cdda = value;
++		} else if (!strcmp(line, "HLE")) {
++			sscanf(arg, "%d", &value);
++			Config.HLE = value;
++		} else if (!strcmp(line, "SlowBoot")) {
++			sscanf(arg, "%d", &value);
++			Config.SlowBoot = value;
++		} else if (!strcmp(line, "AnalogArrow")) {
++			sscanf(arg, "%d", &value);
++			Config.AnalogArrow = value;
++		} else if (!strcmp(line, "Analog_Mode")) {
++			sscanf(arg, "%d", &value);
++			Config.AnalogMode = value;
++		} else if (!strcmp(line, "AnalogDigital")) {
++			sscanf(arg, "%d", &value);
++			Config.AnalogDigital = value;
++		} else if (!strcmp(line, "RCntFix")) {
++			sscanf(arg, "%d", &value);
++			Config.RCntFix = value;
++		} else if (!strcmp(line, "VSyncWA")) {
++			sscanf(arg, "%d", &value);
++			Config.VSyncWA = value;
++		} else if (!strcmp(line, "Cpu")) {
++			sscanf(arg, "%d", &value);
++			Config.Cpu = value;
++		} else if (!strcmp(line, "PsxType")) {
++			sscanf(arg, "%d", &value);
++			Config.PsxType = value;
++		} else if (!strcmp(line, "McdSlot1")) {
++			sscanf(arg, "%d", &value);
++			Config.McdSlot1 = value;
++		} else if (!strcmp(line, "McdSlot2")) {
++			sscanf(arg, "%d", &value);
++			Config.McdSlot2 = value;
++		} else if (!strcmp(line, "SpuIrq")) {
++			sscanf(arg, "%d", &value);
++			Config.SpuIrq = value;
++		} else if (!strcmp(line, "SyncAudio")) {
++			sscanf(arg, "%d", &value);
++			Config.SyncAudio = value;
++		} else if (!strcmp(line, "SpuUpdateFreq")) {
++			sscanf(arg, "%d", &value);
++			if (value < SPU_UPDATE_FREQ_MIN || value > SPU_UPDATE_FREQ_MAX)
++				value = SPU_UPDATE_FREQ_DEFAULT;
++			Config.SpuUpdateFreq = value;
++		} else if (!strcmp(line, "ForcedXAUpdates")) {
++			sscanf(arg, "%d", &value);
++			if (value < FORCED_XA_UPDATES_MIN || value > FORCED_XA_UPDATES_MAX)
++				value = FORCED_XA_UPDATES_DEFAULT;
++			Config.ForcedXAUpdates = value;
++		} else if (!strcmp(line, "ShowFps")) {
++			sscanf(arg, "%d", &value);
++			Config.ShowFps = value;
++		} else if (!strcmp(line, "FrameLimit")) {
++			sscanf(arg, "%d", &value);
++			Config.FrameLimit = value;
++		} else if (!strcmp(line, "FrameSkip")) {
++			sscanf(arg, "%d", &value);
++			if (value < FRAMESKIP_MIN || value > FRAMESKIP_MAX)
++				value = FRAMESKIP_OFF;
++			Config.FrameSkip = value;
++		}
++#ifdef SPU_PCSXREARMED
++		else if (!strcmp(line, "SpuUseInterpolation")) {
++			sscanf(arg, "%d", &value);
++			spu_config.iUseInterpolation = value;
++		} else if (!strcmp(line, "SpuUseReverb")) {
++			sscanf(arg, "%d", &value);
++			spu_config.iUseReverb = value;
++		} else if (!strcmp(line, "SpuVolume")) {
++			sscanf(arg, "%d", &value);
++			if (value > 1024) value = 1024;
++			if (value < 0) value = 0;
++			spu_config.iVolume = value;
++		}
++#endif
++		else if (!strcmp(line, "LastDir")) {
++			int len = strlen(arg);
++
++			if (len == 0 || len > sizeof(Config.LastDir) - 1) {
++				continue;
++			}
++
++			if (arg[len-1] == '\n') {
++				arg[len-1] = '\0';
++			}
++
++			strcpy(Config.LastDir, arg);
++		} else if (!strcmp(line, "Bios")) {
++			int len = strlen(arg);
++
++			if (len == 0 || len > sizeof(Config.Bios) - 1) {
++				continue;
++			}
++
++			if (arg[len-1] == '\n') {
++				arg[len-1] = '\0';
++			}
++
++			strcpy(Config.Bios, arg);
++		}
++#ifdef PSXREC
++		else if (!strcmp(line, "CycleMultiplier")) {
++			sscanf(arg, "%03x", &value);
++			cycle_multiplier = value;
++		}
++#endif
++#ifdef GPU_UNAI
++		else if (!strcmp(line, "lighting")) {
++			sscanf(arg, "%d", &value);
++			gpu_unai_config_ext.lighting = value;
++		} else if (!strcmp(line, "fast_lighting")) {
++			sscanf(arg, "%d", &value);
++			gpu_unai_config_ext.fast_lighting = value;
++		} else if (!strcmp(line, "blending")) {
++			sscanf(arg, "%d", &value);
++			gpu_unai_config_ext.blending = value;
++		} else if (!strcmp(line, "dithering")) {
++			sscanf(arg, "%d", &value);
++			gpu_unai_config_ext.dithering = value;
++		} else if (!strcmp(line, "interlace")) {
++			sscanf(arg, "%d", &value);
++			gpu_unai_config_ext.ilace_force = value;
++		}
++#endif
++	}
++
++	fclose(f);
++}
++
++void config_save()
++{
++	FILE *f;
++	char config[MAXPATHLEN + 16];
++	extern uint_fast8_t ishack_enabled;
++
++	config_path(config, sizeof(config));
++
++	f = fopen(config, "w");
++
++	if (f == NULL) {
++		printf("Failed to open config file: \"%s\" for writing.\n", config);
++		return;
++	}
++
++	if (ishack_enabled == 1)
++	{
++		Config.VSyncWA = 0;
++		/* Default is digital pad */
++		Config.AnalogMode = 0;
++		Config.RCntFix = 0;
++	}
++
++	fprintf(f, "CONFIG_VERSION %d\n"
++		   "Xa %d\n"
++		   "Mdec %d\n"
++		   "PsxAuto %d\n"
++		   "Cdda %d\n"
++		   "HLE %d\n"
++		   "SlowBoot %d\n"
++		   "AnalogArrow %d\n"
++		   "Analog_Mode %d\n"
++		   "RCntFix %d\n"
++		   "VSyncWA %d\n"
++		   "Cpu %d\n"
++		   "PsxType %d\n"
++		   "McdSlot1 %d\n"
++		   "McdSlot2 %d\n"
++		   "SpuIrq %d\n"
++		   "SyncAudio %d\n"
++		   "SpuUpdateFreq %d\n"
++		   "ForcedXAUpdates %d\n"
++		   "ShowFps %d\n"
++		   "FrameLimit %d\n"
++		   "FrameSkip %d\n"
++		   "AnalogDigital %d\n",
++		   CONFIG_VERSION, Config.Xa, Config.Mdec, Config.PsxAuto, Config.Cdda,
++		   /* HLE only because no BIOS was there: keep the user's choice */
++		   hle_forced ? 0 : Config.HLE,
++		   Config.SlowBoot, Config.AnalogArrow, Config.AnalogMode,
++		   Config.RCntFix, Config.VSyncWA, Config.Cpu, Config.PsxType,
++		   Config.McdSlot1, Config.McdSlot2, Config.SpuIrq, Config.SyncAudio,
++		   Config.SpuUpdateFreq, Config.ForcedXAUpdates, Config.ShowFps,
++		   Config.FrameLimit, Config.FrameSkip, Config.AnalogDigital);
++
++#ifdef SPU_PCSXREARMED
++	fprintf(f, "SpuUseInterpolation %d\n", spu_config.iUseInterpolation);
++	fprintf(f, "SpuUseReverb %d\n", spu_config.iUseReverb);
++	fprintf(f, "SpuVolume %d\n", spu_config.iVolume);
++#endif
++
++#ifdef PSXREC
++	fprintf(f, "CycleMultiplier %03x\n", cycle_multiplier);
++#endif
++
++#ifdef GPU_UNAI
++	fprintf(f, "interlace %d\n"
++		   "lighting %d\n"
++		   "fast_lighting %d\n"
++		   "blending %d\n"
++		   "dithering %d\n",
++		   gpu_unai_config_ext.ilace_force,
++		   gpu_unai_config_ext.lighting,
++		   gpu_unai_config_ext.fast_lighting,
++		   gpu_unai_config_ext.blending,
++		   gpu_unai_config_ext.dithering);
++#endif
++
++	if (Config.LastDir[0]) {
++		fprintf(f, "LastDir %s\n", Config.LastDir);
++	}
++
++	if (Config.Bios[0]) {
++		fprintf(f, "Bios %s\n", Config.Bios);
++	}
++
++	if (fflush(f) == 0)
++		fsync(fileno(f));
++	fclose(f);
++}
++
++// Returns 0: success, -1: failure
++int state_load(int slot)
++{
++	char savename[512];
++	sprintf(savename, "%s/%s.%d.sav", sstatesdir, CdromId, slot);
++
++	if (FileExists(savename)) {
++		return LoadState(savename);
++	}
++
++	return -1;
++}
++
++// Returns 0: success, -1: failure
++int state_save(int slot)
++{
++	char savename[512];
++	int ret;
++	sprintf(savename, "%s/%s.%d.sav", sstatesdir, CdromId, slot);
++
++	ret = SaveState(savename);
++	sync();
++	return ret;
++}
++
++/* ------------------------------------------------------------- buttons */
++
++static uint16_t pad1 = 0xFFFF;
++static uint16_t pad2 = 0xFFFF;
++
++/* buttons held when switching between game and menu are ignored until
++ * released, so the button that closed the menu does not reach the game */
++static uint32_t game_suppress = 0;
++static uint32_t menu_suppress = 0;
++static uint32_t prev_held = 0;
++
++struct ps1_controller player_controller[2];
++
++void Set_Controller_Mode()
++{
++	switch (Config.AnalogMode) {
++		/* Digital. Required for some games. */
++	default: player_controller[0].id = 0x41;
++		player_controller[0].pad_mode = 0;
++		player_controller[0].pad_controllertype = 0;
++		break;
++		/* DualAnalog. Some games might misbehave with Dualshock like Descent so this is for those */
++	case 1: player_controller[0].id = 0x53;
++		player_controller[0].pad_mode = 1;
++		player_controller[0].pad_controllertype = 1;
++		break;
++		/* DualShock, required for Ape Escape. */
++	case 2: player_controller[0].id = 0x73;
++		player_controller[0].pad_mode = 1;
++		player_controller[0].pad_controllertype = 1;
++		break;
++	}
++}
++
++static void pad_init(void)
++{
++	player_controller[0].id = 0x41;
++	player_controller[0].pad_mode = 0;
++	player_controller[0].pad_controllertype = 0;
++
++	player_controller[0].joy_left_ax0 = 127;
++	player_controller[0].joy_left_ax1 = 127;
++	player_controller[0].joy_right_ax0 = 127;
++	player_controller[0].joy_right_ax1 = 127;
++
++	player_controller[0].Vib[0] = 0;
++	player_controller[0].Vib[1] = 0;
++	player_controller[0].VibF[0] = 0;
++	player_controller[0].VibF[1] = 0;
++
++	player_controller[0].configmode = 0;
++
++	Set_Controller_Mode();
++}
++
++/* menu state */
++static uint_fast8_t in_game_menu = false; /* inside GameMenu() */
++static uint_fast8_t menu_leave = false;   /* FN pressed: back to the game */
++static uint_fast8_t menu_idle = false;    /* the last menu poll found no button */
++
++static void enter_menu(void)
++{
++	//Sync and close any memcard files opened for writing
++	sioSyncMcds();
++
++	emu_running = false;
++	pl_pause();    // Tell plugin_lib we're pausing emu
++	menu_suppress = x7_input_poll();
++	menu_idle = false;
++	menu_leave = false;
++	in_game_menu = true;
++	GameMenu();
++	in_game_menu = false;
++	menu_leave = false;
++	emu_running = true;
++	game_suppress = x7_input_poll();
++	prev_held = game_suppress;
++	x7_vout_invalidate();   // the menu covered the black bands too
++	pl_resume();    // Tell plugin_lib we're reentering emu (redraws the screen)
++}
++
++void pad_update()
++{
++	uint32_t h = x7_input_poll();
++	uint32_t pressed = h & ~prev_held;
++	uint16_t b = 0xFFFF;
++
++	check_quit();
++
++	prev_held = h;
++	game_suppress &= h;
++	h &= ~game_suppress;
++
++	// FN: the menu
++	if (pressed & X7B_FN & ~game_suppress) {
++		enter_menu();
++		pad1 = 0xFFFF;
++		return;
++	}
++
++	if (h & X7B_B)      b &= ~(1 << DKEY_CROSS);
++	if (h & X7B_A)      b &= ~(1 << DKEY_CIRCLE);
++	if (h & X7B_X)      b &= ~(1 << DKEY_TRIANGLE);
++	if (h & X7B_Y)      b &= ~(1 << DKEY_SQUARE);
++	if (h & X7B_L1)     b &= ~(1 << DKEY_L1);
++	if (h & X7B_R1)     b &= ~(1 << DKEY_R1);
++	if (h & X7B_L2)     b &= ~(1 << DKEY_L2);
++	if (h & X7B_R2)     b &= ~(1 << DKEY_R2);
++	if (h & X7B_SELECT) b &= ~(1 << DKEY_SELECT);
++	if (h & X7B_START)  b &= ~(1 << DKEY_START);
++	if (h & X7B_UP)     b &= ~(1 << DKEY_UP);
++	if (h & X7B_DOWN)   b &= ~(1 << DKEY_DOWN);
++	if (h & X7B_LEFT)   b &= ~(1 << DKEY_LEFT);
++	if (h & X7B_RIGHT)  b &= ~(1 << DKEY_RIGHT);
++
++	// "Map DPAD to L-stick": the D-pad also moves the left stick
++	if (Config.AnalogArrow == 1) {
++		player_controller[0].joy_left_ax0 =
++			(h & X7B_LEFT) ? 0 : (h & X7B_RIGHT) ? 255 : 127;
++		player_controller[0].joy_left_ax1 =
++			(h & X7B_UP) ? 0 : (h & X7B_DOWN) ? 255 : 127;
++	} else {
++		player_controller[0].joy_left_ax0 = 127;
++		player_controller[0].joy_left_ax1 = 127;
++	}
++
++	pad1 = b;
++}
++
++unsigned short pad_read(int num)
++{
++	return (num == 0 ? pad1 : pad2);
++}
++
++static unsigned int menu_keys_now(void)
++{
++	uint32_t h = x7_input_poll();
++	unsigned int k = 0;
++
++	menu_suppress &= h;
++	h &= ~menu_suppress;
++
++	if (h & X7B_UP)     k |= MKEY_UP;
++	if (h & X7B_DOWN)   k |= MKEY_DOWN;
++	if (h & X7B_LEFT)   k |= MKEY_LEFT;
++	if (h & X7B_RIGHT)  k |= MKEY_RIGHT;
++	if (h & X7B_A)      k |= MKEY_A;       // confirm
++	if (h & X7B_B)      k |= MKEY_B;       // back
++	if (h & X7B_X)      k |= MKEY_X;
++	if (h & X7B_Y)      k |= MKEY_Y;
++	if (h & X7B_L1)     k |= MKEY_L;
++	if (h & X7B_R1)     k |= MKEY_R;
++	if (h & X7B_START)  k |= MKEY_START;
++	if (h & (X7B_SELECT | X7B_FN)) k |= MKEY_SELECT;  // one menu level back
++
++	// FN in the in-game menu: straight back to the game. frontend.c leaves
++	//  one menu level per KEY_SELECT, so KEY_SELECT is reported until
++	//  GameMenu() has returned.
++	if ((h & X7B_FN) && in_game_menu)
++		menu_leave = true;
++	if (menu_leave)
++		k |= MKEY_SELECT;
++	return k;
++}
++
++unsigned int port_menu_keys(void)
++{
++	unsigned int k;
++
++	check_quit();
++	k = menu_keys_now();
++
++	// No button twice in a row: frontend.c has drawn its screen and waits
++	//  for a button, polling every 50 ms. Sleep until an input event
++	//  instead (the menus need no periodic redraw).
++	if (k == 0 && menu_idle) {
++		x7_input_wait(x7_quit_requested() ? 100 : -1);
++		check_quit();
++		k = menu_keys_now();
++	}
++	menu_idle = (k == 0);
++	return k;
++}
++
++void port_menu_keys_reset(void)
++{
++	menu_suppress = x7_input_poll();
++	menu_idle = false;
++}
++
++/* ------------------------------------------------------------- video */
++
++void video_flip(void)
++{
++	// FN: menus are being left without drawing them
++	if (menu_leave)
++		return;
++	x7_present_canvas_2x(menu_canvas);
++}
++
++void video_clear(void)
++{
++	memset(menu_canvas, 0, sizeof(menu_canvas));
++}
++
++/* no hardware scaler: nothing to resize (vout_x7.c scales in software) */
++void update_window_size(int w, int h, uint_fast8_t ntsc_fix)
++{
++}
++
++char *GetMemcardPath(int slot) {
++	switch(slot) {
++	case 1:
++		if (Config.McdSlot1 == -1) {
++			return NULL;
++		} else {
++			return McdPath1;
++		}
++	case 2:
++		if (Config.McdSlot2 == -1) {
++			return NULL;
++		} else {
++			return McdPath2;
++		}
++	}
++	return NULL;
++}
++
++
++void update_memcards(int load_mcd) {
++
++	if (Config.McdSlot1 == -1) {
++		McdPath1[0] = '\0';
++	} else if (Config.McdSlot1 == 0) {
++		if (string_is_empty(CdromId)) {
++			/* Fallback */
++			snprintf(McdPath1, sizeof(McdPath1), "%s/%s", memcardsdir, "card1.mcd");
++		} else {
++			snprintf(McdPath1, sizeof(McdPath1), "%s/%s.1.mcr", memcardsdir, CdromId);
++		}
++	} else {
++		snprintf(McdPath1, sizeof(McdPath1), "%s/mcd%03d.mcr", memcardsdir, (int)Config.McdSlot1);
++	}
++
++	if (Config.McdSlot2 == -1) {
++		McdPath2[0] = '\0';
++	} else if (Config.McdSlot2 == 0) {
++		if (string_is_empty(CdromId)) {
++			/* Fallback */
++			snprintf(McdPath2, sizeof(McdPath2), "%s/%s", memcardsdir, "card2.mcd");
++		} else {
++			snprintf(McdPath2, sizeof(McdPath2), "%s/%s.2.mcr", memcardsdir, CdromId);
++		}
++	} else {
++		snprintf(McdPath2, sizeof(McdPath2), "%s/mcd%03d.mcr", memcardsdir, (int)Config.McdSlot2);
++	}
++
++	if (load_mcd & 1)
++		LoadMcd(MCD1, GetMemcardPath(1)); //Memcard 1
++	if (load_mcd & 2)
++		LoadMcd(MCD2, GetMemcardPath(2)); //Memcard 2
++}
++
++const char *bios_file_get() {
++	return BiosFile;
++}
++
++// if [CdromId].bin is exsit, use the spec bios
++void check_spec_bios() {
++	FILE *f = NULL;
++	char bios[MAXPATHLEN * 2];
++	snprintf(bios, sizeof(bios), "%s/%s.bin", Config.BiosDir, CdromId);
++	f = fopen(bios, "rb");
++	if (f == NULL) {
++		strcpy(BiosFile, Config.Bios);
++		return;
++	}
++	fclose(f);
++	snprintf(BiosFile, sizeof(BiosFile), "%s.bin", CdromId);
++}
++
++/* no rumble motor */
++int set_rumble_gain(unsigned gain) { return 0; }
++void Rumble_Init() {}
++int trigger_rumble(uint8_t low, uint8_t high) { return 0; }
++
++static void usage(void)
++{
++	printf("usage: pcsx4all [options] -iso <disc image>  (.cue .bin .img .iso .chd .pbp ...)\n"
++	       "  -bios          use the real BIOS (from %s)\n"
++	       "  -hle           use the HLE BIOS\n"
++	       "  -interpreter   no dynarec\n"
++	       "  -file <exe>    run a PS-X EXE\n"
++	       "  -showfps -noframelimit -frameskip <-1..3> -pal -ntsc -silent ...\n",
++	       Config.BiosDir);
++}
++
++int main (int argc, char **argv)
++{
++	char filename[256];
++	const char *cdrfilename = GetIsoFile();
++	uint_fast8_t iso_given = false;
++
++	filename[0] = '\0'; /* Executable file name */
++
++	setvbuf(stdout, NULL, _IOLBF, 0);
++	printf("PCSX4ALL for X7 Game (R36SX), built " __DATE__ " " __TIME__ "\n");
++
++	setup_paths();
++	x7_signals_init();
++
++	// PCSX
++	Config.McdSlot1 = 1;
++	Config.McdSlot2 = -1;
++	update_memcards(0);
++	snprintf(Config.PatchesDir, sizeof(Config.PatchesDir), "%s", patchesdir);
++	snprintf(Config.BiosDir, sizeof(Config.BiosDir), "%s", biosdir);
++	strcpy(Config.Bios, "scph1001.bin");
++
++	Config.AnalogDigital = 0;
++	Config.AnalogArrow = 0;
++	Config.AnalogMode = 0; /* 0=digital pad (the console has no sticks), 1=DualAnalog, 2=DualShock */
++
++	Config.Xa=0; /* 0=XA enabled, 1=XA disabled */
++	Config.Mdec=0; /* 0=Black&White Mdecs Only Disabled, 1=Black&White Mdecs Only Enabled */
++	Config.PsxAuto=1; /* 1=autodetect system (pal or ntsc) */
++	Config.PsxType=0; /* PSX_TYPE_NTSC=ntsc, PSX_TYPE_PAL=pal */
++	Config.Cdda=0; /* 0=Enable Cd audio, 1=Disable Cd audio */
++	Config.HLE=0; /* 0=BIOS (HLE anyway when no BIOS file is found), 1=HLE */
++#if defined (PSXREC)
++	Config.Cpu=0; /* 0=recompiler, 1=interpreter */
++#else
++	Config.Cpu=1; /* 0=recompiler, 1=interpreter */
++#endif
++	Config.SlowBoot=0; /* 0=skip bios logo sequence on boot  1=show sequence (does not apply to HLE) */
++	Config.RCntFix=0; /* 1=Parasite Eve 2, Vandal Hearts 1/2 Fix */
++	Config.VSyncWA=0; /* 1=InuYasha Sengoku Battle Fix */
++	Config.SpuIrq=0; /* 1=SPU IRQ always on, fixes some games */
++
++	Config.SyncAudio=0;	/* 1=emu waits if audio output buffer is full
++	                       (happens seldom with new auto frame limit) */
++
++	// Number of times per frame to update SPU. Rearmed default is once per
++	//  frame, but we are more flexible (for slower devices).
++	//  Valid values: SPU_UPDATE_FREQ_1 .. SPU_UPDATE_FREQ_32
++	Config.SpuUpdateFreq = SPU_UPDATE_FREQ_DEFAULT;
++
++	//senquack - Added option to allow queuing CDREAD_INT interrupts sooner
++	//           than they'd normally be issued when SPU's XA buffer is not
++	//           full. This fixes droupouts in music/speech on slow devices.
++	Config.ForcedXAUpdates = FORCED_XA_UPDATES_DEFAULT;
++
++	Config.ShowFps=0;    // 0=don't show FPS
++	Config.FrameLimit = true;
++	Config.FrameSkip = FRAMESKIP_OFF;
++
++	// The whole 640x480 picture is drawn: no pixel skipping in gpu_unai
++	Config.VideoScaling = 0;
++
++	default_lastdir();
++
++#ifdef SPU_PCSXREARMED
++	// PCSX4ALL defaults (see src/port/sdl/port.c for the PCSX ReARMed ones)
++	spu_config.iHaveConfiguration = 1;    // *MUST* be set to 1 before calling SPU_Init()
++	spu_config.iUseReverb = 0;
++	spu_config.iUseInterpolation = 0;
++	spu_config.iXAPitch = 0;
++	spu_config.iVolume = 1024;            // 1024 is max volume
++	spu_config.iUseThread = 0;            // one core: no SPU thread
++	spu_config.iUseFixedUpdates = 1;      // This is always set to 1 in libretro's pcsxReARMed
++	spu_config.iTempo = 1;                // slow emulation stretches sound instead of stuttering
++#endif
++
++	// gpu_unai
++#ifdef GPU_UNAI
++	gpu_unai_config_ext.ilace_force = 0;
++	gpu_unai_config_ext.pixel_skip = 0;
++	gpu_unai_config_ext.lighting = 1;
++	gpu_unai_config_ext.fast_lighting = 1;
++	gpu_unai_config_ext.blending = 1;
++	gpu_unai_config_ext.dithering = 0;
++	gpu_unai_config_ext.ntsc_fix = 0;
++#endif
++
++	// Load config from file.
++	config_load();
++
++	// Check if LastDir exists.
++	probe_lastdir();
++
++	// command line options
++	uint_fast8_t param_parse_error = 0;
++	for (int i = 1; i < argc; i++) {
++		// PCSX
++		// XA audio disabled
++		if (strcmp(argv[i],"-noxa") == 0)
++			Config.Xa = 1;
++
++		// Black & White MDEC
++		else if (strcmp(argv[i],"-bwmdec") == 0)
++			Config.Mdec = 1;
++
++		// Force PAL system
++		else if (strcmp(argv[i],"-pal") == 0) {
++			Config.PsxAuto = 0;
++			Config.PsxType = 1;
++		}
++
++		// Force NTSC system
++		else if (strcmp(argv[i],"-ntsc") == 0) {
++			Config.PsxAuto = 0;
++			Config.PsxType = 0;
++		}
++
++		// CD audio disabled
++		else if (strcmp(argv[i],"-nocdda") == 0)
++			Config.Cdda = 1;
++
++		// BIOS enabled
++		else if (strcmp(argv[i],"-bios") == 0)
++			Config.HLE = 0;
++
++		// HLE BIOS
++		else if (strcmp(argv[i],"-hle") == 0)
++			Config.HLE = 1;
++
++		// Interpreter enabled
++		else if (strcmp(argv[i],"-interpreter") == 0)
++			Config.Cpu = 1;
++
++		// Show BIOS logo sequence at BIOS startup (doesn't apply to HLE)
++		else if (strcmp(argv[i],"-slowboot") == 0)
++			Config.SlowBoot = 1;
++
++		// Parasite Eve 2, Vandal Hearts 1/2 Fix
++		else if (strcmp(argv[i],"-rcntfix") == 0)
++			Config.RCntFix = 1;
++
++		// InuYasha Sengoku Battle Fix
++		else if (strcmp(argv[i],"-vsyncwa") == 0)
++			Config.VSyncWA = 1;
++
++		// SPU IRQ always enabled (fixes audio in some games)
++		else if (strcmp(argv[i],"-spuirq") == 0)
++			Config.SpuIrq = 1;
++
++		// Set ISO file
++		else if (strcmp(argv[i],"-iso") == 0) {
++			if (i + 1 < argc) {
++				SetIsoFile(argv[++i]);
++				iso_given = true;
++			} else {
++				printf("ERROR: missing filename for -iso\n");
++				param_parse_error = true;
++				break;
++			}
++		}
++
++		// Set executable file
++		else if (strcmp(argv[i],"-file") == 0) {
++			if (i + 1 < argc) {
++				snprintf(filename, sizeof(filename), "%s", argv[++i]);
++			} else {
++				printf("ERROR: missing filename for -file\n");
++				param_parse_error = true;
++				break;
++			}
++		}
++
++		// Audio synchronization option: if audio buffer full, main thread
++		//  blocks. Otherwise, just drop the samples.
++		else if (strcmp(argv[i],"-syncaudio") == 0)
++			Config.SyncAudio = 1;
++
++		// Number of times per frame to update SPU. PCSX Rearmed default is once
++		//  per frame, but we are more flexible. Valid value is 0..5, where
++		//  0 is once per frame, 5 is 32 times per frame (2^5)
++		else if (strcmp(argv[i],"-spuupdatefreq") == 0) {
++			int val = -1;
++			if (++i < argc) {
++				val = atoi(argv[i]);
++				if (val >= SPU_UPDATE_FREQ_MIN && val <= SPU_UPDATE_FREQ_MAX) {
++					Config.SpuUpdateFreq = val;
++				} else val = -1;
++			} else {
++				printf("ERROR: missing value for -spuupdatefreq\n");
++			}
++
++			if (val == -1) {
++				printf("ERROR: -spuupdatefreq value must be between %d..%d\n"
++					   "(%d is once per frame)\n",
++					   SPU_UPDATE_FREQ_MIN, SPU_UPDATE_FREQ_MAX, SPU_UPDATE_FREQ_1);
++				param_parse_error = true;
++				break;
++			}
++		}
++
++		//senquack - Added option to allow queuing CDREAD_INT interrupts sooner
++		//           than they'd normally be issued when SPU's XA buffer is not
++		//           full. This fixes droupouts in music/speech on slow devices.
++		else if (strcmp(argv[i],"-forcedxaupdates") == 0) {
++			int val = -1;
++			if (++i < argc) {
++				val = atoi(argv[i]);
++				if (val >= FORCED_XA_UPDATES_MIN && val <= FORCED_XA_UPDATES_MAX) {
++					Config.ForcedXAUpdates = val;
++				} else val = -1;
++			} else {
++				printf("ERROR: missing value for -forcedxaupdates\n");
++			}
++
++			if (val == -1) {
++				printf("ERROR: -forcedxaupdates value must be between %d..%d\n",
++					   FORCED_XA_UPDATES_MIN, FORCED_XA_UPDATES_MAX);
++				param_parse_error = true;
++				break;
++			}
++		}
++
++		// Performance monitoring options
++		else if (strcmp(argv[i],"-perfmon") == 0) {
++			// Enable detailed stats and console output
++			Config.PerfmonConsoleOutput = true;
++			Config.PerfmonDetailedStats = true;
++		}
++
++		// GPU
++		// show FPS
++		else if (strcmp(argv[i],"-showfps") == 0) {
++			Config.ShowFps = true;
++		}
++
++		// frame limit
++		else if (strcmp(argv[i],"-noframelimit") == 0) {
++			Config.FrameLimit = 0;
++		}
++
++		// frame skip
++		else if (strcmp(argv[i],"-frameskip") == 0) {
++			int val = -1000;
++			if (++i < argc) {
++				val = atoi(argv[i]);
++				if (val >= -1 && val <= 3) {
++					Config.FrameSkip = val;
++				} else val = -1000;
++			} else {
++				printf("ERROR: missing value for -frameskip\n");
++			}
++
++			if (val == -1000) {
++				printf("ERROR: -frameskip value must be between -1..3 (-1 is AUTO)\n");
++				param_parse_error = true;
++				break;
++			}
++		}
++
++#ifdef GPU_UNAI
++		// Render only every other line (looks ugly but faster)
++		else if (strcmp(argv[i],"-interlace") == 0) {
++			gpu_unai_config_ext.ilace_force = 1;
++		}
++
++		// Allow 24bpp->15bpp dithering (only polys, only if PS1 game uses it)
++		else if (strcmp(argv[i],"-dither") == 0) {
++			gpu_unai_config_ext.dithering = 1;
++		}
++
++		else if (strcmp(argv[i],"-nolight") == 0) {
++			gpu_unai_config_ext.lighting = 0;
++		}
++
++		else if (strcmp(argv[i],"-noblend") == 0) {
++			gpu_unai_config_ext.blending = 0;
++		}
++
++		// Apply lighting to all primitives. Default is to only light primitives
++		//  with light values below a certain threshold (for speed).
++		else if (strcmp(argv[i],"-nofastlight") == 0) {
++			gpu_unai_config_ext.fast_lighting = 0;
++		}
++#endif //GPU_UNAI
++
++	// SPU
++#ifdef SPU_PCSXREARMED
++		// No sound
++		else if (strcmp(argv[i],"-silent") == 0) {
++			spu_config.iDisabled = 1;
++		}
++		// Reverb
++		else if (strcmp(argv[i],"-reverb") == 0) {
++			spu_config.iUseReverb = 1;
++		}
++		// XA Pitch change support
++		else if (strcmp(argv[i],"-xapitch") == 0) {
++			spu_config.iXAPitch = 1;
++		}
++
++		// Don't output fixed number of samples per frame
++		else if (strcmp(argv[i],"-nofixedupdates") == 0) {
++			spu_config.iUseFixedUpdates = 0;
++		}
++
++		// Set interpolation none/simple/gaussian/cubic, default is none
++		else if (strcmp(argv[i],"-interpolation") == 0) {
++			int val = -1;
++			if (++i < argc) {
++				if (strcmp(argv[i],"none") == 0) val=0;
++				if (strcmp(argv[i],"simple") == 0) val=1;
++				if (strcmp(argv[i],"gaussian") == 0) val=2;
++				if (strcmp(argv[i],"cubic") == 0) val=3;
++			} else
++				printf("ERROR: missing value for -interpolation\n");
++
++			if (val == -1) {
++				printf("ERROR: -interpolation value must be one of: none,simple,gaussian,cubic\n");
++				param_parse_error = true; break;
++			}
++
++			spu_config.iUseInterpolation = val;
++		}
++
++		// Set volume level of SPU, 0-1024
++		//  If value is 0, sound will be disabled.
++		else if (strcmp(argv[i],"-volume") == 0) {
++			int val = -1;
++			if (++i < argc)
++				val = atoi(argv[i]);
++			else
++				printf("ERROR: missing value for -volume\n");
++
++			if (val < 0 || val > 1024) {
++				printf("ERROR: -volume value must be between 0-1024. Value of 0 will mute sound\n"
++						"        but SPU plugin will still run, ensuring best compatibility.\n"
++						"        Use -silent flag to disable SPU plugin entirely.\n");
++				param_parse_error = true; break;
++			}
++
++			spu_config.iVolume = val;
++		}
++
++		// Slow emulation stutters instead of stretching the sound
++		else if (strcmp(argv[i],"-notempo") == 0) {
++			spu_config.iTempo = 0;
++		}
++#endif //SPU_PCSXREARMED
++
++		else if (strcmp(argv[i],"-h") == 0 || strcmp(argv[i],"-help") == 0 ||
++			 strcmp(argv[i],"--help") == 0) {
++			usage();
++			return 0;
++		}
++
++		// A plain argument is the disc image
++		else if (argv[i][0] != '-' && !iso_given) {
++			SetIsoFile(argv[i]);
++			iso_given = true;
++		}
++
++		else {
++			printf("Ignoring unknown option %s\n", argv[i]);
++		}
++	}
++
++	if (param_parse_error) {
++		printf("Failed to parse command-line parameters, exiting.\n");
++		exit(1);
++	}
++
++	choose_bios();
++	if (Config.HLE)
++		printf("BIOS: HLE (emulated)\n");
++	else
++		printf("BIOS: %s/%s\n", Config.BiosDir, Config.Bios);
++
++	if (x7_video_init() < 0) {
++		printf("Cannot use the framebuffer, exiting.\n");
++		exit(1);
++	}
++	atexit(pcsx4all_exit);
++
++	x7_input_init(1000);
++
++	if (argc < 2 || cdrfilename[0] == '\0') {
++		// Enter frontend main-menu:
++		emu_running = false;
++		if (!SelectGame()) {
++			printf("No game selected, exiting.\n");
++			exit(0);
++		}
++		iso_given = cdrfilename[0] != '\0';
++	}
++
++	if (psxInit() == -1) {
++		printf("PSX emulator couldn't be initialized.\n");
++		exit(1);
++	}
++
++	if (LoadPlugins() == -1) {
++		printf("Failed loading plugins.\n");
++		exit(1);
++	}
++
++	update_memcards(0);
++	strcpy(BiosFile, Config.Bios);
++	Rumble_Init();
++
++	pcsx4all_initted = true;
++	emu_running = true;
++
++	// Initialize plugin_lib, gpulib
++	pl_init();
++
++	if (cdrfilename[0] != '\0') {
++		if (CheckCdrom() == -1) {
++			printf("Failed checking ISO image: %s\n", cdrfilename);
++			exit(1);
++		} else {
++			check_spec_bios();
++			psxReset();
++			printf("Running ISO image: %s.\n", cdrfilename);
++			if (LoadCdrom() == -1) {
++				printf("Failed loading ISO image.\n");
++				exit(1);
++			} else {
++				// load cheats
++				cheat_load();
++			}
++		}
++	} else {
++		psxReset();
++	}
++
++	CheckforCDROMid_applyhacks();
++
++	/* If we are using per-disk memory cards, load them now */
++	if ((Config.McdSlot1 == 0) || (Config.McdSlot2 == 0)) {
++		update_memcards(0);
++		LoadMcd(MCD1, GetMemcardPath(1)); //Memcard 1
++		LoadMcd(MCD2, GetMemcardPath(2)); //Memcard 2
++	}
++	pad_init();
++
++	if (filename[0] != '\0') {
++		if (Load(filename) == -1) {
++			printf("Failed loading executable.\n");
++			filename[0]='\0';
++		}
++
++		printf("Running executable: %s.\n",filename);
++	}
++
++	if ((cdrfilename[0] == '\0') && (filename[0] == '\0') && (Config.HLE == 0)) {
++		printf("Running BIOS.\n");
++	}
++
++	if ((cdrfilename[0] != '\0') || (filename[0] != '\0') || (Config.HLE == 0)) {
++		psxCpu->Execute();
++	}
++
++	return 0;
++}
++
++unsigned get_ticks(void)
++{
++#ifdef TIME_IN_MSEC
++	return x7_ticks_ms();
++#else
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (unsigned)ts.tv_sec * 1000000u + (unsigned)(ts.tv_nsec / 1000);
++#endif
++}
++
++void wait_ticks(unsigned s)
++{
++#ifdef TIME_IN_MSEC
++	usleep(s * 1000);
++#else
++	usleep(s);
++#endif
++}
++
++void port_printf(int x, int y, const char *text)
++{
++	unsigned short *screen = (SCREEN + x + y * SCREEN_WIDTH);
++	int len = strlen(text);
++	if (x < 0 || y < 0 || y + 8 > SCREEN_HEIGHT)
++		return;
++	if (len > (SCREEN_WIDTH - x) / 8)
++		len = (SCREEN_WIDTH - x) / 8;
++	for (int i = 0; i < len; i++) {
++		int pos = 0;
++		unsigned char c = (unsigned char)text[i];
++		if (c > 127) c = '?';
++		for (int l = 0; l < 8; l++) {
++			unsigned char data = x7_font8x8[(c*8)+l];
++			if (data&0x80u) screen[pos+0] = ~screen[pos+0];
++			if (data&0x40u) screen[pos+1] = ~screen[pos+1];
++			if (data&0x20u) screen[pos+2] = ~screen[pos+2];
++			if (data&0x10u) screen[pos+3] = ~screen[pos+3];
++			if (data&0x08u) screen[pos+4] = ~screen[pos+4];
++			if (data&0x04u) screen[pos+5] = ~screen[pos+5];
++			if (data&0x02u) screen[pos+6] = ~screen[pos+6];
++			if (data&0x01u) screen[pos+7] = ~screen[pos+7];
++			pos += SCREEN_WIDTH;
++		}
++		screen += 8;
++	}
++}
++
++/* 8x8 font, characters 0..127 */
++const unsigned char x7_font8x8[] =
++{
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++		0x3C,0x42,0x99,0xBD,0xBD,0x99,0x42,0x3C,0x3C,0x42,0x81,0x81,0x81,0x81,0x42,0x3C,
++		0xFE,0x82,0x8A,0xD2,0xA2,0x82,0xFE,0x00,0xFE,0x82,0x82,0x82,0x82,0x82,0xFE,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x38,0x64,0x74,0x7C,0x38,0x00,0x00,
++		0x80,0xC0,0xF0,0xFC,0xF0,0xC0,0x80,0x00,0x01,0x03,0x0F,0x3F,0x0F,0x03,0x01,0x00,
++		0x18,0x3C,0x7E,0x18,0x7E,0x3C,0x18,0x00,0xEE,0xEE,0xEE,0xCC,0x00,0xCC,0xCC,0x00,
++		0x00,0x00,0x30,0x68,0x78,0x30,0x00,0x00,0x00,0x38,0x64,0x74,0x7C,0x38,0x00,0x00,
++		0x3C,0x66,0x7A,0x7A,0x7E,0x7E,0x3C,0x00,0x0E,0x3E,0x3A,0x22,0x26,0x6E,0xE4,0x40,
++		0x18,0x3C,0x7E,0x3C,0x3C,0x3C,0x3C,0x00,0x3C,0x3C,0x3C,0x3C,0x7E,0x3C,0x18,0x00,
++		0x08,0x7C,0x7E,0x7E,0x7C,0x08,0x00,0x00,0x10,0x3E,0x7E,0x7E,0x3E,0x10,0x00,0x00,
++		0x58,0x2A,0xDC,0xC8,0xDC,0x2A,0x58,0x00,0x24,0x66,0xFF,0xFF,0x66,0x24,0x00,0x00,
++		0x00,0x10,0x10,0x38,0x38,0x7C,0xFE,0x00,0xFE,0x7C,0x38,0x38,0x10,0x10,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x1C,0x1C,0x1C,0x18,0x00,0x18,0x18,0x00,
++		0x6C,0x6C,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x28,0x7C,0x28,0x7C,0x28,0x00,0x00,
++		0x10,0x38,0x60,0x38,0x0C,0x78,0x10,0x00,0x40,0xA4,0x48,0x10,0x24,0x4A,0x04,0x00,
++		0x18,0x34,0x18,0x3A,0x6C,0x66,0x3A,0x00,0x18,0x18,0x20,0x00,0x00,0x00,0x00,0x00,
++		0x30,0x60,0x60,0x60,0x60,0x60,0x30,0x00,0x0C,0x06,0x06,0x06,0x06,0x06,0x0C,0x00,
++		0x10,0x54,0x38,0x7C,0x38,0x54,0x10,0x00,0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00,0x3E,0x00,0x00,0x00,
++		0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x04,0x08,0x10,0x20,0x40,0x00,0x00,
++		0x38,0x4C,0xC6,0xC6,0xC6,0x64,0x38,0x00,0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00,
++		0x7C,0xC6,0x0E,0x3C,0x78,0xE0,0xFE,0x00,0x7E,0x0C,0x18,0x3C,0x06,0xC6,0x7C,0x00,
++		0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x0C,0x00,0xFC,0xC0,0xFC,0x06,0x06,0xC6,0x7C,0x00,
++		0x3C,0x60,0xC0,0xFC,0xC6,0xC6,0x7C,0x00,0xFE,0xC6,0x0C,0x18,0x30,0x30,0x30,0x00,
++		0x78,0xC4,0xE4,0x78,0x86,0x86,0x7C,0x00,0x7C,0xC6,0xC6,0x7E,0x06,0x0C,0x78,0x00,
++		0x00,0x00,0x18,0x00,0x00,0x18,0x00,0x00,0x00,0x00,0x18,0x00,0x00,0x18,0x18,0x30,
++		0x1C,0x38,0x70,0xE0,0x70,0x38,0x1C,0x00,0x00,0x7C,0x00,0x00,0x7C,0x00,0x00,0x00,
++		0x70,0x38,0x1C,0x0E,0x1C,0x38,0x70,0x00,0x7C,0xC6,0xC6,0x1C,0x18,0x00,0x18,0x00,
++		0x3C,0x42,0x99,0xA1,0xA5,0x99,0x42,0x3C,0x38,0x6C,0xC6,0xC6,0xFE,0xC6,0xC6,0x00,
++		0xFC,0xC6,0xC6,0xFC,0xC6,0xC6,0xFC,0x00,0x3C,0x66,0xC0,0xC0,0xC0,0x66,0x3C,0x00,
++		0xF8,0xCC,0xC6,0xC6,0xC6,0xCC,0xF8,0x00,0xFE,0xC0,0xC0,0xFC,0xC0,0xC0,0xFE,0x00,
++		0xFE,0xC0,0xC0,0xFC,0xC0,0xC0,0xC0,0x00,0x3E,0x60,0xC0,0xCE,0xC6,0x66,0x3E,0x00,
++		0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0x00,0x7E,0x18,0x18,0x18,0x18,0x18,0x7E,0x00,
++		0x06,0x06,0x06,0x06,0xC6,0xC6,0x7C,0x00,0xC6,0xCC,0xD8,0xF0,0xF8,0xDC,0xCE,0x00,
++		0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00,0xC6,0xEE,0xFE,0xFE,0xD6,0xC6,0xC6,0x00,
++		0xC6,0xE6,0xF6,0xFE,0xDE,0xCE,0xC6,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,
++		0xFC,0xC6,0xC6,0xC6,0xFC,0xC0,0xC0,0x00,0x7C,0xC6,0xC6,0xC6,0xDE,0xCC,0x7A,0x00,
++		0xFC,0xC6,0xC6,0xCE,0xF8,0xDC,0xCE,0x00,0x78,0xCC,0xC0,0x7C,0x06,0xC6,0x7C,0x00,
++		0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,
++		0xC6,0xC6,0xC6,0xEE,0x7C,0x38,0x10,0x00,0xC6,0xC6,0xD6,0xFE,0xFE,0xEE,0xC6,0x00,
++		0xC6,0xEE,0x3C,0x38,0x7C,0xEE,0xC6,0x00,0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x00,
++		0xFE,0x0E,0x1C,0x38,0x70,0xE0,0xFE,0x00,0x3C,0x30,0x30,0x30,0x30,0x30,0x3C,0x00,
++		0x60,0x60,0x30,0x18,0x0C,0x06,0x06,0x00,0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00,
++		0x18,0x3C,0x66,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,
++		0x30,0x30,0x18,0x00,0x00,0x00,0x00,0x00,0x00,0x3C,0x06,0x3E,0x66,0x66,0x3C,0x00,
++		0x60,0x7C,0x66,0x66,0x66,0x66,0x7C,0x00,0x00,0x3C,0x66,0x60,0x60,0x66,0x3C,0x00,
++		0x06,0x3E,0x66,0x66,0x66,0x66,0x3E,0x00,0x00,0x3C,0x66,0x66,0x7E,0x60,0x3C,0x00,
++		0x1C,0x30,0x78,0x30,0x30,0x30,0x30,0x00,0x00,0x3E,0x66,0x66,0x66,0x3E,0x06,0x3C,
++		0x60,0x7C,0x76,0x66,0x66,0x66,0x66,0x00,0x18,0x00,0x38,0x18,0x18,0x18,0x18,0x00,
++		0x0C,0x00,0x1C,0x0C,0x0C,0x0C,0x0C,0x38,0x60,0x60,0x66,0x6C,0x78,0x6C,0x66,0x00,
++		0x38,0x18,0x18,0x18,0x18,0x18,0x18,0x00,0x00,0xEC,0xFE,0xFE,0xFE,0xD6,0xC6,0x00,
++		0x00,0x7C,0x76,0x66,0x66,0x66,0x66,0x00,0x00,0x3C,0x66,0x66,0x66,0x66,0x3C,0x00,
++		0x00,0x7C,0x66,0x66,0x66,0x7C,0x60,0x60,0x00,0x3E,0x66,0x66,0x66,0x3E,0x06,0x06,
++		0x00,0x7E,0x70,0x60,0x60,0x60,0x60,0x00,0x00,0x3C,0x60,0x3C,0x06,0x66,0x3C,0x00,
++		0x30,0x78,0x30,0x30,0x30,0x30,0x1C,0x00,0x00,0x66,0x66,0x66,0x66,0x6E,0x3E,0x00,
++		0x00,0x66,0x66,0x66,0x66,0x3C,0x18,0x00,0x00,0xC6,0xD6,0xFE,0xFE,0x7C,0x6C,0x00,
++		0x00,0x66,0x3C,0x18,0x3C,0x66,0x66,0x00,0x00,0x66,0x66,0x66,0x66,0x3E,0x06,0x3C,
++		0x00,0x7E,0x0C,0x18,0x30,0x60,0x7E,0x00,0x0E,0x18,0x0C,0x38,0x0C,0x18,0x0E,0x00,
++		0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00,0x70,0x18,0x30,0x1C,0x30,0x18,0x70,0x00,
++		0x00,0x00,0x76,0xDC,0x00,0x00,0x00,0x00,0x10,0x28,0x10,0x54,0xAA,0x44,0x00,0x00,
++};
+diff --git a/src/port/r36sx/port.h b/src/port/r36sx/port.h
+new file mode 100644
+index 0000000..c50ff87
+--- /dev/null
++++ b/src/port/r36sx/port.h
+@@ -0,0 +1,92 @@
++#ifndef __PSXPORT_H__
++#define __PSXPORT_H__
++
++/*
++ * PCSX4ALL port for X7 Game on the R36SX (HiChip E3100, MIPS 74Kc, no GPU).
++ * Same interface as src/port/sdl/port.h, without SDL: video goes straight
++ * to /dev/fb0 (640x480 RGB565), input comes from evdev, audio from the
++ * spu_pcsxrearmed ALSA driver.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <stdio.h>
++#include <string.h>
++#include <stdarg.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <math.h>
++#include <time.h>
++#include <ctype.h>
++#include <sys/types.h>
++#include <assert.h>
++
++#ifndef MAXPATHLEN
++#define MAXPATHLEN 256
++#endif
++
++extern char cheatsdir[MAXPATHLEN];
++
++struct ps1_controller {
++	uint8_t id;
++	uint8_t joy_right_ax0;
++	uint8_t joy_right_ax1;
++	uint8_t joy_left_ax0;
++	uint8_t joy_left_ax1;
++	uint8_t Vib[2];
++	uint8_t VibF[2];
++	uint8_t pad_mode;
++	uint8_t pad_controllertype;
++	uint8_t configmode;
++};
++
++extern struct ps1_controller player_controller[2];
++
++#define	CONFIG_VERSION	1
++
++INLINE int string_is_empty(const char *data)
++{
++	return (!data || (*data == '\0')) ? 1 : 0;
++}
++
++unsigned get_ticks(void);
++void wait_ticks(unsigned s);
++void pad_update(void);
++unsigned short pad_read(int num);
++
++void video_flip(void);
++void video_clear(void);
++void port_printf(int x, int y, const char *text);
++
++/* The menu draws into SCREEN, a cached 320x240 RGB565 canvas; video_flip()
++ * shows it doubled on the 640x480 screen. Game frames do not use SCREEN:
++ * vout_update() (vout_x7.c) writes them straight to the framebuffer. */
++extern unsigned short *SCREEN;
++extern int SCREEN_WIDTH, SCREEN_HEIGHT;
++
++char *GetMemcardPath(int slot);
++
++int state_load(int slot);
++int state_save(int slot);
++
++void update_memcards(int load_mcd);
++const char *bios_file_get();
++void check_spec_bios();
++
++void Rumble_Init();
++int trigger_rumble(uint8_t low, uint8_t high);
++int set_rumble_gain(unsigned gain);
++
++int SelectGame();
++int GameMenu();
++
++/* Menu buttons for frontend.c (it has no SDL here): the KEY_* bits of
++ * frontend.c for the buttons held now. port_menu_keys_reset() forgets the
++ * buttons held now until they are released (frontend.c's key_reset()). */
++unsigned int port_menu_keys(void);
++void port_menu_keys_reset(void);
++
++#endif
+diff --git a/src/port/r36sx/vout_x7.c b/src/port/r36sx/vout_x7.c
+new file mode 100644
+index 0000000..7dfe83f
+--- /dev/null
++++ b/src/port/r36sx/vout_x7.c
+@@ -0,0 +1,202 @@
++/*
++ * gpulib video output for X7 Game (R36SX): replaces gpu/gpulib/vout_port.c.
++ *
++ * The PS1 picture (256/320/368/384/512/640 wide, up to 240/256/480 lines,
++ * 15- or 24-bit) is scaled to fill the 640x480 screen: the PS1 picture is
++ * 4:3 like the screen. 320x240 (most games) is an exact 2x; other sizes are
++ * nearest-neighbour. Lines the game does not display (screen.h < vres) stay
++ * black, centred like on a TV.
++ *
++ * The framebuffer is uncached: every screen line is built in a cached line
++ * buffer and written once (twice for 2x) with sequential 32-bit stores; the
++ * screen is never read.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <stdio.h>
++#include <string.h>
++#include "psxcommon.h"
++#include "port.h"
++#include "plugin_lib.h"
++#include "gpu/gpulib/gpu.h"
++#include "x7_hw.h"
++
++/* PS1 BGR555 -> RGB565 / BGR565, one pixel or two packed in 32 bits */
++#define RGB565(p)   ((((p) & 0x1f) << 11) | (((p) & 0x3e0) << 1) | (((p) >> 10) & 0x1f))
++#define BGR565(p)   ((((p) & 0x7fe0) << 1) | ((p) & 0x1f))
++#define RGB565X2(c) ((((c) & 0x001f001fu) << 11) | (((c) & 0x03e003e0u) << 1) | (((c) >> 10) & 0x001f001fu))
++#define BGR565X2(c) ((((c) & 0x7fe07fe0u) << 1) | ((c) & 0x001f001fu))
++/* 24-bit (MDEC movies) */
++#define RGB24_565(r, g, b) ((((r) & 0xf8) << 8) | (((g) & 0xfc) << 3) | ((b) >> 3))
++
++static uint32_t line[X7_FB_W / 2] __attribute__((aligned(32)));
++/* a VRAM line that wraps around the right edge, unwrapped */
++static uint16_t wrapbuf[1024 * 2] __attribute__((aligned(32)));
++static uint16_t xmap[X7_FB_W];   /* source pixel of each screen pixel */
++static int xmap_w = 0;
++
++/* where the picture was last drawn: the black bands above and below it are
++ * only written again when that changes (or after the menu) */
++static int bands_top = -1, bands_h = -1;
++
++void x7_vout_invalidate(void)
++{
++	bands_top = -1;
++}
++
++static void make_xmap(int w)
++{
++	int x;
++	for (x = 0; x < X7_FB_W; x++)
++		xmap[x] = (uint16_t)((x * w) / X7_FB_W);
++	xmap_w = w;
++}
++
++/* 15-bit line: src = first displayed pixel, w = PS1 width */
++static void build_line15(const uint16_t *src, int w, int bgr)
++{
++	int i;
++
++	if (w == 320) {
++		if (bgr) {
++			for (i = 0; i < 320; i++) {
++				uint32_t c = BGR565(src[i]);
++				line[i] = c | (c << 16);
++			}
++		} else {
++			for (i = 0; i < 320; i++) {
++				uint32_t c = RGB565(src[i]);
++				line[i] = c | (c << 16);
++			}
++		}
++	} else if (w == 640 && !((uintptr_t)src & 3)) {
++		const uint32_t *s32 = (const uint32_t *)(const void *)src;
++		if (bgr) {
++			for (i = 0; i < 320; i++)
++				line[i] = BGR565X2(s32[i]);
++		} else {
++			for (i = 0; i < 320; i++)
++				line[i] = RGB565X2(s32[i]);
++		}
++	} else {
++		if (xmap_w != w)
++			make_xmap(w);
++		if (bgr) {
++			for (i = 0; i < 320; i++) {
++				uint32_t a = src[xmap[2 * i]], b = src[xmap[2 * i + 1]];
++				line[i] = BGR565(a) | (BGR565(b) << 16);
++			}
++		} else {
++			for (i = 0; i < 320; i++) {
++				uint32_t a = src[xmap[2 * i]], b = src[xmap[2 * i + 1]];
++				line[i] = RGB565(a) | (RGB565(b) << 16);
++			}
++		}
++	}
++}
++
++/* 24-bit line: s8 = first byte of the displayed line, w = PS1 width */
++static void build_line24(const uint8_t *s8, int w, int bgr)
++{
++	int i;
++
++	if (xmap_w != w)
++		make_xmap(w);
++	for (i = 0; i < 320; i++) {
++		const uint8_t *a = s8 + 3 * xmap[2 * i];
++		const uint8_t *b = s8 + 3 * xmap[2 * i + 1];
++		uint32_t ca, cb;
++		if (bgr) {
++			ca = RGB24_565(a[2], a[1], a[0]);
++			cb = RGB24_565(b[2], b[1], b[0]);
++		} else {
++			ca = RGB24_565(a[0], a[1], a[2]);
++			cb = RGB24_565(b[0], b[1], b[2]);
++		}
++		line[i] = ca | (cb << 16);
++	}
++}
++
++void vout_update(void)
++{
++	const int x0 = gpu.screen.x;
++	const int y0 = gpu.screen.y;
++	const int w = gpu.screen.hres;     /* PS1 width */
++	const int vres = gpu.screen.vres;  /* 240, 256 or 480 */
++	const int rgb24 = gpu.status.rgb24;
++	const int bgr = x7_fb_bgr;
++	int h = gpu.screen.h;              /* lines displayed */
++	int out_h, top, r, last_sy = -1;
++	unsigned int acc = 0, step;
++	/* bytes of VRAM one displayed line covers */
++	const int line_bytes = rgb24 ? w * 3 : w * 2;
++
++	if (!x7_fb || w <= 0 || w > 1024 || vres <= 0 || h <= 0)
++		return;
++	if (h > vres)
++		h = vres;
++
++	out_h = h * X7_FB_H / vres;
++	if (out_h > X7_FB_H)
++		out_h = X7_FB_H;
++	top = (X7_FB_H - out_h) / 2;
++	step = ((unsigned int)vres << 16) / X7_FB_H;
++
++	if (top != bands_top || out_h != bands_h) {
++		x7_fb_clear_lines(0, top);
++		x7_fb_clear_lines(top + out_h, X7_FB_H);
++		bands_top = top;
++		bands_h = out_h;
++	}
++
++	for (r = 0; r < out_h; r++, acc += step) {
++		int sy = (int)(acc >> 16);
++
++		if (sy != last_sy) {
++			const uint16_t *row = gpu.vram + ((unsigned int)((y0 + sy) & 511) << 10);
++			const uint8_t *s8 = (const uint8_t *)row + x0 * 2;
++
++			if (x0 * 2 + line_bytes > 2048) {
++				/* the line wraps around the right edge of VRAM */
++				int n = (line_bytes + 1) / 2, i;
++				for (i = 0; i < n; i++)
++					wrapbuf[i] = row[(x0 + i) & 1023];
++				s8 = (const uint8_t *)wrapbuf;
++			}
++			if (rgb24)
++				build_line24(s8, w, bgr);
++			else
++				build_line15((const uint16_t *)(const void *)s8, w, bgr);
++			last_sy = sy;
++		}
++		x7_fb_write_line(top + r, line);
++	}
++
++	if (Config.ShowFps)
++		x7_fb_text(8, 8, pl_data.stats_msg);
++}
++
++int vout_init(void)
++{
++	return 0;
++}
++
++int vout_finish(void)
++{
++	return 0;
++}
++
++/* PS1 display disabled: black screen */
++void vout_blank(void)
++{
++	x7_fb_clear_lines(0, X7_FB_H);
++	x7_vout_invalidate();
++}
++
++void vout_set_config(const struct gpulib_config_t *config)
++{
++}
+diff --git a/src/port/r36sx/x7_hw.c b/src/port/r36sx/x7_hw.c
+new file mode 100644
+index 0000000..e6be674
+--- /dev/null
++++ b/src/port/r36sx/x7_hw.c
+@@ -0,0 +1,571 @@
++/*
++ * X7 Game (R36SX) hardware layer for PCSX4ALL: framebuffer, buttons,
++ * signals. No SDL.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#define _GNU_SOURCE	/* pipe2() */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <signal.h>
++#include <dirent.h>
++#include <time.h>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
++#include <poll.h>
++#include <linux/fb.h>
++#include <linux/kd.h>
++#include <linux/input.h>
++
++#include "x7_hw.h"
++
++/* sio.c: writes memory cards with unsaved changes, signal-safe */
++extern void sioEmergencyFlushMcds(void);
++
++/* ===================================================== framebuffer */
++
++volatile uint32_t *x7_fb = NULL;
++unsigned int x7_fb_pitch32 = 0;
++int x7_fb_bgr = 0;
++
++static int fb_fd = -1;
++static size_t fb_map_size;
++static struct fb_var_screeninfo fb_var_orig;
++static int fb_var_saved = 0;
++static int tty_fd = -1;
++static int tty_mode_orig = -1;
++static volatile sig_atomic_t video_restored = 0;
++
++static int open_console(void)
++{
++	int mode;
++
++	/* stdin is the console (tty1) when the game list starts us */
++	if (ioctl(0, KDGETMODE, &mode) == 0) {
++		int fd = fcntl(0, F_DUPFD_CLOEXEC, 3);
++		if (fd >= 0) {
++			tty_mode_orig = mode;
++			return fd;
++		}
++	}
++	{
++		int fd = open("/dev/tty0", O_RDWR | O_CLOEXEC);
++		if (fd >= 0 && ioctl(fd, KDGETMODE, &mode) == 0) {
++			tty_mode_orig = mode;
++			return fd;
++		}
++		if (fd >= 0)
++			close(fd);
++	}
++	return -1;
++}
++
++int x7_video_init(void)
++{
++	struct fb_var_screeninfo var;
++	struct fb_fix_screeninfo fix;
++	void *p;
++
++	fb_fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
++	if (fb_fd < 0) {
++		perror("x7: /dev/fb0");
++		return -1;
++	}
++	if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &fb_var_orig) < 0) {
++		perror("x7: FBIOGET_VSCREENINFO");
++		goto fail;
++	}
++	fb_var_saved = 1;
++
++	/* Text console off first: switched while still drawing, it would
++	 * redraw the game list in 16 bits with its 32-bit colours (a yellow
++	 * haze that stays after the game) */
++	tty_fd = open_console();
++	if (tty_fd >= 0 && ioctl(tty_fd, KDSETMODE, KD_GRAPHICS) < 0)
++		perror("x7: KDSETMODE");
++
++	var = fb_var_orig;
++	var.bits_per_pixel = 16;
++	var.xoffset = 0;
++	var.yoffset = 0;
++	var.activate = FB_ACTIVATE_NOW;
++	if (fb_var_orig.bits_per_pixel != 16 ||
++	    fb_var_orig.xoffset || fb_var_orig.yoffset) {
++		if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &var) < 0)
++			perror("x7: FBIOPUT_VSCREENINFO");
++	}
++	if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &var) < 0 ||
++	    ioctl(fb_fd, FBIOGET_FSCREENINFO, &fix) < 0) {
++		perror("x7: FBIOGET");
++		goto fail;
++	}
++	if (var.bits_per_pixel != 16 || var.xres < X7_FB_W || var.yres < X7_FB_H ||
++	    fix.line_length < X7_FB_W * 2 ||
++	    fix.smem_len < (unsigned long)fix.line_length * (var.yoffset + X7_FB_H)) {
++		fprintf(stderr, "x7: unusable framebuffer mode %ux%u %ubpp, line %u bytes\n",
++			var.xres, var.yres, var.bits_per_pixel, fix.line_length);
++		goto fail;
++	}
++	x7_fb_bgr = (var.blue.offset == 11 && var.red.offset == 0);
++	printf("x7: framebuffer %ux%u 16bpp (%s565), line %u bytes\n",
++	       var.xres, var.yres, x7_fb_bgr ? "BGR" : "RGB", fix.line_length);
++
++	fb_map_size = fix.smem_len;
++	p = mmap(NULL, fb_map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
++	if (p == MAP_FAILED) {
++		perror("x7: mmap /dev/fb0");
++		goto fail;
++	}
++	x7_fb_pitch32 = fix.line_length / 4;
++	x7_fb = (volatile uint32_t *)((uint8_t *)p +
++		(size_t)var.yoffset * fix.line_length + (size_t)var.xoffset * 2);
++	video_restored = 0;
++	x7_fb_clear_lines(0, X7_FB_H);
++	return 0;
++
++fail:
++	x7_video_restore();
++	return -1;
++}
++
++void x7_video_restore(void)
++{
++	/* only system calls and plain stores: also used from signal handlers */
++	if (video_restored)
++		return;
++	video_restored = 1;
++
++	if (x7_fb) {
++		x7_fb_clear_lines(0, X7_FB_H);
++		x7_fb = NULL;
++	}
++	if (fb_fd >= 0) {
++		if (fb_var_saved) {
++			struct fb_var_screeninfo var = fb_var_orig;
++			var.activate = FB_ACTIVATE_NOW;
++			ioctl(fb_fd, FBIOPUT_VSCREENINFO, &var);
++		}
++		close(fb_fd);
++		fb_fd = -1;
++	}
++	if (tty_fd >= 0) {
++		ioctl(tty_fd, KDSETMODE, tty_mode_orig >= 0 ? tty_mode_orig : KD_TEXT);
++		close(tty_fd);
++		tty_fd = -1;
++	}
++}
++
++void x7_fb_clear_lines(int y0, int y1)
++{
++	int y, n;
++
++	if (!x7_fb)
++		return;
++	if (y0 < 0) y0 = 0;
++	if (y1 > X7_FB_H) y1 = X7_FB_H;
++	for (y = y0; y < y1; y++) {
++		volatile uint32_t *d = x7_fb + (unsigned int)y * x7_fb_pitch32;
++		for (n = 0; n < X7_FB_W / 2; n += 8) {
++			d[0] = 0; d[1] = 0; d[2] = 0; d[3] = 0;
++			d[4] = 0; d[5] = 0; d[6] = 0; d[7] = 0;
++			d += 8;
++		}
++	}
++}
++
++void x7_present_canvas_2x(const uint16_t *canvas)
++{
++	uint32_t line[X7_FB_W / 2];
++	int x, y;
++
++	if (!x7_fb)
++		return;
++	for (y = 0; y < X7_FB_H / 2; y++) {
++		const uint16_t *s = canvas + y * (X7_FB_W / 2);
++		if (x7_fb_bgr) {
++			for (x = 0; x < X7_FB_W / 2; x++) {
++				uint32_t c = s[x];
++				c = ((c & 0x1f) << 11) | (c & 0x7e0) | (c >> 11);
++				line[x] = c | (c << 16);
++			}
++		} else {
++			for (x = 0; x < X7_FB_W / 2; x++) {
++				uint32_t c = s[x];
++				line[x] = c | (c << 16);
++			}
++		}
++		x7_fb_write_line(2 * y, line);
++		x7_fb_write_line(2 * y + 1, line);
++	}
++}
++
++void x7_fb_text(int x, int y, const char *text)
++{
++	int len = (int)strlen(text);
++	int max = (X7_FB_W - x) / 16;
++	int row, i, b;
++
++	if (!x7_fb || y < 0 || y + 16 > X7_FB_H || x < 0)
++		return;
++	if (len > max)
++		len = max;
++	x &= ~1;
++	for (row = 0; row < 8; row++) {
++		volatile uint32_t *d0 = x7_fb + (unsigned int)(y + 2 * row) * x7_fb_pitch32 + x / 2;
++		volatile uint32_t *d1 = d0 + x7_fb_pitch32;
++		for (i = 0; i < len; i++) {
++			unsigned char c = (unsigned char)text[i];
++			unsigned char bits = x7_font8x8[(c > 127 ? '?' : c) * 8 + row];
++			for (b = 0; b < 8; b++) {
++				uint32_t w = (bits & (0x80 >> b)) ? 0xffffffffu : 0;
++				*d0++ = w;
++				*d1++ = w;
++			}
++		}
++	}
++}
++
++/* ===================================================== buttons */
++
++#define PAD_NAME "X7 Game Gamepad"
++#define MAX_IN 8
++#define LONG_BITS (sizeof(long) * 8)
++#define TEST_BIT(a, n) (((a)[(n) / LONG_BITS] >> ((n) % LONG_BITS)) & 1)
++
++static int in_fd[MAX_IN];
++static int n_in = 0;
++static int have_pad = 0;   /* in_fd[0] is the virtual pad (and the only fd) */
++static uint32_t held = 0;
++static unsigned int last_scan_ms = 0;
++
++static uint32_t key_bit(unsigned int code)
++{
++	switch (code) {
++	case BTN_SOUTH:      return X7B_B;
++	case BTN_EAST:       return X7B_A;
++	case BTN_NORTH:      return X7B_X;
++	case BTN_WEST:       return X7B_Y;
++	case BTN_TL:         return X7B_L1;
++	case BTN_TR:         return X7B_R1;
++	case BTN_TL2:        return X7B_L2;
++	case BTN_TR2:        return X7B_R2;
++	case BTN_SELECT:     return X7B_SELECT;
++	case BTN_START:      return X7B_START;
++	case BTN_MODE:       return X7B_FN;
++	case BTN_DPAD_UP:    return X7B_UP;
++	case BTN_DPAD_DOWN:  return X7B_DOWN;
++	case BTN_DPAD_LEFT:  return X7B_LEFT;
++	case BTN_DPAD_RIGHT: return X7B_RIGHT;
++	}
++	return 0;
++}
++
++static void set_hat(unsigned int axis, int value)
++{
++	if (axis == ABS_HAT0X) {
++		held &= ~(X7B_LEFT | X7B_RIGHT);
++		if (value < 0) held |= X7B_LEFT;
++		else if (value > 0) held |= X7B_RIGHT;
++	} else if (axis == ABS_HAT0Y) {
++		held &= ~(X7B_UP | X7B_DOWN);
++		if (value < 0) held |= X7B_UP;
++		else if (value > 0) held |= X7B_DOWN;
++	}
++}
++
++/* after SYN_DROPPED (or on open): read the device's current state */
++static void resync(int fd)
++{
++	unsigned long keys[(KEY_MAX + LONG_BITS) / LONG_BITS];
++	struct input_absinfo abs;
++	unsigned int c;
++
++	memset(keys, 0, sizeof(keys));
++	if (ioctl(fd, EVIOCGKEY(sizeof(keys)), keys) >= 0) {
++		for (c = BTN_MISC; c <= BTN_DPAD_RIGHT; c++) {
++			uint32_t b = key_bit(c);
++			if (!b)
++				continue;
++			if (TEST_BIT(keys, c))
++				held |= b;
++			else
++				held &= ~b;
++		}
++	}
++	if (ioctl(fd, EVIOCGABS(ABS_HAT0X), &abs) >= 0)
++		set_hat(ABS_HAT0X, abs.value);
++	if (ioctl(fd, EVIOCGABS(ABS_HAT0Y), &abs) >= 0)
++		set_hat(ABS_HAT0Y, abs.value);
++}
++
++static void close_inputs(void)
++{
++	while (n_in > 0)
++		close(in_fd[--n_in]);
++	have_pad = 0;
++	held = 0;
++}
++
++/* want_pad: opens the virtual pad only (returns its fd, -1 if absent);
++ * else adds every device with pad buttons except the virtual pad to
++ * in_fd[] (returns how many fds are open) */
++static int scan_inputs(int want_pad)
++{
++	DIR *d = opendir("/dev/input");
++	struct dirent *e;
++	int found = -1;
++
++	if (!d)
++		return want_pad ? -1 : n_in;
++	while ((e = readdir(d))) {
++		unsigned long keys[(KEY_MAX + LONG_BITS) / LONG_BITS];
++		char path[300], name[96] = "";
++		int fd, ok;
++
++		if (strncmp(e->d_name, "event", 5))
++			continue;
++		if (!want_pad && n_in >= MAX_IN)
++			break;
++		snprintf(path, sizeof(path), "/dev/input/%s", e->d_name);
++		fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++		if (fd < 0)
++			continue;
++		ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
++		memset(keys, 0, sizeof(keys));
++		ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys);
++		if (want_pad)
++			ok = !strcmp(name, PAD_NAME);
++		else
++			ok = strcmp(name, PAD_NAME) &&
++			     (TEST_BIT(keys, BTN_SOUTH) || TEST_BIT(keys, BTN_DPAD_UP));
++		if (!ok) {
++			close(fd);
++			continue;
++		}
++		printf("x7: buttons from %s (%s)\n", path, name);
++		if (want_pad) {
++			found = fd;
++			break;
++		}
++		in_fd[n_in++] = fd;
++		resync(fd);
++	}
++	closedir(d);
++	return want_pad ? found : n_in;
++}
++
++/* the virtual pad replaces whatever raw devices were open */
++static int use_pad(void)
++{
++	int fd = scan_inputs(1);
++
++	if (fd < 0)
++		return 0;
++	close_inputs();
++	in_fd[0] = fd;
++	n_in = 1;
++	have_pad = 1;
++	resync(fd);
++	return 1;
++}
++
++void x7_input_init(int wait_ms)
++{
++	unsigned int end = x7_ticks_ms() + (unsigned int)wait_ms;
++
++	close_inputs();
++	for (;;) {
++		if (use_pad())
++			break;
++		if ((int)(x7_ticks_ms() - end) >= 0) {
++			/* raw buttons until the pad shows up (see x7_input_poll) */
++			scan_inputs(0);
++			break;
++		}
++		usleep(100000);
++	}
++	if (!n_in)
++		fprintf(stderr, "x7: no gamepad found\n");
++	last_scan_ms = x7_ticks_ms();
++}
++
++void x7_input_shutdown(void)
++{
++	close_inputs();
++}
++
++uint32_t x7_input_poll(void)
++{
++	struct input_event ev[32];
++	int i, j;
++
++	for (i = 0; i < n_in; i++) {
++		for (;;) {
++			ssize_t r = read(in_fd[i], ev, sizeof(ev));
++			if (r < 0 && errno == EINTR)
++				continue;
++			if (r <= 0) {
++				if (r < 0 && errno != EAGAIN) {
++					/* device gone (x7-padd restarted?) */
++					close(in_fd[i]);
++					in_fd[i] = in_fd[--n_in];
++					have_pad = 0;
++					held = 0;
++					i--;
++				}
++				break;
++			}
++			for (j = 0; j < (int)(r / sizeof(ev[0])); j++) {
++				if (ev[j].type == EV_KEY) {
++					uint32_t b = key_bit(ev[j].code);
++					if (b) {
++						if (ev[j].value)
++							held |= b;
++						else
++							held &= ~b;
++					}
++				} else if (ev[j].type == EV_ABS) {
++					set_hat(ev[j].code, ev[j].value);
++				} else if (ev[j].type == EV_SYN && ev[j].code == SYN_DROPPED) {
++					resync(in_fd[i]);
++				}
++			}
++		}
++	}
++
++	/* Not on the virtual pad (missing at start, or x7-padd restarted):
++	 * look for it once a second and switch to it; meanwhile the raw
++	 * button devices, reopened if they went away too. */
++	if (!have_pad && (unsigned int)(x7_ticks_ms() - last_scan_ms) >= 1000) {
++		last_scan_ms = x7_ticks_ms();
++		if (!use_pad() && n_in == 0)
++			scan_inputs(0);
++	}
++	return held;
++}
++
++/* ===================================================== signals */
++
++static volatile sig_atomic_t quit_requested = 0;
++/* self-pipe: on_quit_signal() writes a byte, x7_input_wait() polls the read
++ * end, so a SIGTERM that comes just before poll() still wakes it */
++static int quit_pipe[2] = { -1, -1 };
++
++uint32_t x7_input_wait(int timeout_ms)
++{
++	struct pollfd pfd[MAX_IN + 1];
++	int i, n = 0;
++
++	/* without the pad, wake up at least once a second to look for it */
++	if (!have_pad && (timeout_ms < 0 || timeout_ms > 1000))
++		timeout_ms = 1000;
++	for (i = 0; i < n_in; i++) {
++		pfd[n].fd = in_fd[i];
++		pfd[n].events = POLLIN;
++		pfd[n++].revents = 0;
++	}
++	if (quit_pipe[0] >= 0) {
++		pfd[n].fd = quit_pipe[0];
++		pfd[n].events = POLLIN;
++		pfd[n++].revents = 0;
++	}
++	/* a signal arriving during poll() interrupts it; one arriving before
++	 * makes the pipe readable (it is never drained: once asked to quit,
++	 * every later wait returns at once) */
++	if (!quit_requested)
++		poll(pfd, (nfds_t)n, timeout_ms);
++	return x7_input_poll();
++}
++
++int x7_quit_requested(void)
++{
++	return quit_requested;
++}
++
++static void emergency_cleanup(void)
++{
++	sioEmergencyFlushMcds();
++	x7_video_restore();
++}
++
++static void on_quit_signal(int sig)
++{
++	int saved_errno = errno;
++
++	(void)sig;
++	if (quit_pipe[1] >= 0 && write(quit_pipe[1], "q", 1) < 0) {
++		/* pipe full: it is readable already */
++	}
++	errno = saved_errno;
++	if (!quit_requested) {
++		quit_requested = 1;
++		/* the main loop exits within a frame, or within 2 s when a game
++		 * is writing a memory card; if it is stuck, SIGALRM finishes the
++		 * job (X7 Game's shutdown waits 5 s) */
++		alarm(4);
++	}
++}
++
++static void on_alarm(int sig)
++{
++	static const char msg[] = "x7: no clean exit within 4 s, forcing it\n";
++	(void)sig;
++	if (write(2, msg, sizeof(msg) - 1) < 0) { /* nothing to do */ }
++	emergency_cleanup();
++	_exit(1);
++}
++
++static void on_crash(int sig)
++{
++	emergency_cleanup();
++	signal(sig, SIG_DFL);
++	raise(sig);
++	_exit(128 + sig);
++}
++
++void x7_signals_init(void)
++{
++	struct sigaction sa;
++	static const int quit_sigs[] = { SIGTERM, SIGINT, SIGHUP, SIGQUIT };
++	static const int crash_sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
++	unsigned int i;
++
++	if (pipe2(quit_pipe, O_NONBLOCK | O_CLOEXEC) < 0) {
++		perror("x7: pipe2");
++		quit_pipe[0] = quit_pipe[1] = -1;
++	}
++
++	memset(&sa, 0, sizeof(sa));
++	sigemptyset(&sa.sa_mask);
++
++	sa.sa_handler = on_quit_signal;
++	sa.sa_flags = SA_RESTART;
++	for (i = 0; i < sizeof(quit_sigs) / sizeof(quit_sigs[0]); i++)
++		sigaction(quit_sigs[i], &sa, NULL);
++
++	sa.sa_handler = on_alarm;
++	sa.sa_flags = 0;
++	sigaction(SIGALRM, &sa, NULL);
++
++	sa.sa_handler = on_crash;
++	sa.sa_flags = SA_NODEFER | SA_RESETHAND;
++	for (i = 0; i < sizeof(crash_sigs) / sizeof(crash_sigs[0]); i++)
++		sigaction(crash_sigs[i], &sa, NULL);
++
++	signal(SIGPIPE, SIG_IGN);
++}
++
++unsigned int x7_ticks_ms(void)
++{
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (unsigned int)ts.tv_sec * 1000u + (unsigned int)(ts.tv_nsec / 1000000);
++}
+diff --git a/src/port/r36sx/x7_hw.h b/src/port/r36sx/x7_hw.h
+new file mode 100644
+index 0000000..643979f
+--- /dev/null
++++ b/src/port/r36sx/x7_hw.h
+@@ -0,0 +1,107 @@
++#ifndef X7_HW_H
++#define X7_HW_H
++
++/*
++ * X7 Game (R36SX) hardware layer for PCSX4ALL: framebuffer, buttons,
++ * signals. No SDL.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <stdint.h>
++
++/* ------------------------------------------------------------- screen */
++
++/* The screen is 640x480, RGB565 (or BGR565, see x7_fb_bgr). The memory is
++ * UNCACHED: only write it, with 32-bit stores, never read it back. */
++#define X7_FB_W 640
++#define X7_FB_H 480
++
++extern volatile uint32_t *x7_fb;   /* NULL until x7_video_init() succeeded */
++extern unsigned int x7_fb_pitch32; /* framebuffer line length in 32-bit words */
++extern int x7_fb_bgr;              /* 1: blue in the top bits (BGR565) */
++
++int  x7_video_init(void);
++/* Restores the framebuffer mode and the console mode (KD_TEXT) found at
++ * start. Safe to call more than once and from a signal handler. */
++void x7_video_restore(void);
++
++/* Writes a 640-pixel line (320 words of two pixels) to screen line y. */
++static inline void x7_fb_write_line(int y, const uint32_t *src)
++{
++	volatile uint32_t *d = x7_fb + (unsigned int)y * x7_fb_pitch32;
++	int n;
++	for (n = 0; n < X7_FB_W / 2; n += 8) {
++		d[0] = src[0]; d[1] = src[1]; d[2] = src[2]; d[3] = src[3];
++		d[4] = src[4]; d[5] = src[5]; d[6] = src[6]; d[7] = src[7];
++		d += 8; src += 8;
++	}
++}
++
++/* Fills screen lines y0..y1-1 with black. */
++void x7_fb_clear_lines(int y0, int y1);
++
++/* Shows a 320x240 RGB565 canvas doubled on the whole screen. */
++void x7_present_canvas_2x(const uint16_t *canvas);
++
++/* Draws text (8x8 font doubled to 16x16, opaque: white on black) straight
++ * to the screen at screen pixel x (even), y. */
++void x7_fb_text(int x, int y, const char *text);
++
++/* port.c: the 8x8 font, 8 bytes per character */
++extern const unsigned char x7_font8x8[];
++
++/* ------------------------------------------------------------- buttons */
++
++enum {
++	X7B_B      = 1 << 0,   /* BTN_SOUTH, bottom */
++	X7B_A      = 1 << 1,   /* BTN_EAST, right */
++	X7B_X      = 1 << 2,   /* BTN_NORTH, top */
++	X7B_Y      = 1 << 3,   /* BTN_WEST, left */
++	X7B_L1     = 1 << 4,
++	X7B_R1     = 1 << 5,
++	X7B_L2     = 1 << 6,
++	X7B_R2     = 1 << 7,
++	X7B_SELECT = 1 << 8,
++	X7B_START  = 1 << 9,
++	X7B_FN     = 1 << 10,  /* BTN_MODE */
++	X7B_UP     = 1 << 11,
++	X7B_DOWN   = 1 << 12,
++	X7B_LEFT   = 1 << 13,
++	X7B_RIGHT  = 1 << 14,
++};
++
++/* Opens "X7 Game Gamepad" (waits up to wait_ms for it), else every input
++ * device with gamepad buttons; in that case x7_input_poll() keeps looking
++ * for the virtual pad once a second and switches to it. */
++void x7_input_init(int wait_ms);
++void x7_input_shutdown(void);
++/* Reads the pending input events; returns the X7B_* bits held now. */
++uint32_t x7_input_poll(void);
++/* Sleeps until an input event (or timeout_ms; -1: no timeout, but at most
++ * 1 s while the virtual pad is missing; a signal also wakes it), then does
++ * x7_input_poll(). */
++uint32_t x7_input_wait(int timeout_ms);
++
++/* ------------------------------------------------------------- video out */
++
++/* vout_x7.c: redraw the black bands above/below the picture with the next
++ * frame (after the menu covered the whole screen) */
++void x7_vout_invalidate(void);
++
++/* ------------------------------------------------------------- signals */
++
++/* SIGTERM/SIGINT/SIGHUP/SIGQUIT ask the emulator to quit (the main loop
++ * sees x7_quit_requested() and exits cleanly within a frame, or within 2 s
++ * while a game writes a memory card; if it has not within 4 seconds, the
++ * screen is restored and the memory cards are written from the signal
++ * handler). Crash signals restore the screen too. */
++void x7_signals_init(void);
++int  x7_quit_requested(void);
++
++unsigned int x7_ticks_ms(void);
++
++#endif

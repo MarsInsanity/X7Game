@@ -4,12 +4,30 @@
 # then x7game/x7game.cfg from the card (simple KEY=VALUE lines only).
 case "$1" in
 start)
+	# The display driver takes the screen over from the boot logo when it
+	# starts. Ask once more in case that failed (layer busy, time-out): on a
+	# screen that is already ours this changes nothing except the blank state
+	# the driver reports (fb0/blank reads 0 instead of 4).
+	test -e /sys/class/graphics/fb0/blank &&
+		echo 0 > /sys/class/graphics/fb0/blank 2>/dev/null
 	cp /etc/x7game.conf /run/x7game.conf
 	if mount -t vfat -o rw,noatime,flush,utf8,umask=022 /dev/mmcblk0p1 /boot 2>/dev/null; then
 		mkdir -p /boot/x7game/logs 2>/dev/null
 		if test -f /boot/x7game/x7game.cfg; then
+			# Drop Windows line ends, "# comments" and trailing blanks, then
+			# take only KEY=VALUE lines with a value: an empty one would win
+			# over the default and read as 0 (battery_off_level= would switch
+			# the low-battery power-off off). Other lines are noted in the
+			# kernel log, so they show up in boot.log.
+			ok='^[a-z_]+=[A-Za-z0-9_.-]+$'
 			tr -d '\r' < /boot/x7game/x7game.cfg |
-				grep -E '^[a-z_]+=[A-Za-z0-9_.-]*$' >> /run/x7game.conf
+				sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//' > /run/x7game.cfg
+			grep -E "$ok" /run/x7game.cfg >> /run/x7game.conf
+			grep -v -E -e "$ok" -e '^$' /run/x7game.cfg |
+				while read -r line; do
+					echo "<5>x7game: ignored x7game.cfg line: $line" > /dev/kmsg 2>/dev/null
+				done
+			rm -f /run/x7game.cfg
 		fi
 	else
 		echo "X7 Game: could not mount the SD card's FAT32 partition (/dev/mmcblk0p1)"

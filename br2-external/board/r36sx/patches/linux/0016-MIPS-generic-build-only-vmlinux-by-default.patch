@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sun, 22 Nov 2026 14:30:00 -0800
+Subject: [PATCH] MIPS: generic: build only vmlinux by default (X7 Game)
+
+Buildroot runs "make all" before "make vmlinux". On MIPS_GENERIC "all"
+also made vmlinux.gz.itb (a FIT image, which needs U-Boot's mkimage and
+so host-uboot-tools and its host-gnutls chain) and, with
+SYS_SUPPORTS_ZBOOT, the compressed vmlinuz. X7 Game uses neither: its
+boot container is made from vmlinux by mkx7boot.py. Both images can
+still be built by name ("make vmlinuz", "make vmlinux.gz.itb").
+---
+ arch/mips/Makefile         | 1 -
+ arch/mips/generic/Platform | 1 -
+ 2 files changed, 2 deletions(-)
+
+diff --git a/arch/mips/Makefile b/arch/mips/Makefile
+index cff1a9a..09b9806 100644
+--- a/arch/mips/Makefile
++++ b/arch/mips/Makefile
+@@ -82,7 +82,6 @@ endif
+ 
+ all-$(CONFIG_BOOT_ELF32)	:= $(vmlinux-32)
+ all-$(CONFIG_BOOT_ELF64)	:= $(vmlinux-64)
+-all-$(CONFIG_SYS_SUPPORTS_ZBOOT)+= vmlinuz
+ 
+ #
+ # GCC uses -G 0 -mabicalls -fpic as default.  We don't want PIC in the kernel
+diff --git a/arch/mips/generic/Platform b/arch/mips/generic/Platform
+index 0c03623..8e22fcf 100644
+--- a/arch/mips/generic/Platform
++++ b/arch/mips/generic/Platform
+@@ -13,7 +13,6 @@ cflags-$(CONFIG_MACH_INGENIC_SOC)	+= -I$(srctree)/arch/mips/include/asm/mach-ing
+ cflags-$(CONFIG_MIPS_GENERIC)	+= -I$(srctree)/arch/mips/include/asm/mach-generic
+ 
+ load-$(CONFIG_MIPS_GENERIC)	+= 0xffffffff80100000
+-all-$(CONFIG_MIPS_GENERIC)	+= vmlinux.gz.itb
+ 
+ its-y					:= vmlinux.its.S
+ its-$(CONFIG_FIT_IMAGE_FDT_BOSTON)	+= board-boston.its.S

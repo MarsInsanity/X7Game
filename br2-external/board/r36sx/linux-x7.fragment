@@ -13,6 +13,9 @@ CONFIG_DEFAULT_HOSTNAME="x7game"
 CONFIG_CMDLINE_PARTITION=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_ZLIB=y
+# the root image is LZ4 (BR2_TARGET_ROOTFS_SQUASHFS4_LZ4, -Xhc): several times
+# less CPU per block read than zlib; zlib stays so gzip images still mount
+CONFIG_SQUASHFS_LZ4=y
 
 # The console on the screen (framebuffer console on the GMA framebuffer).
 CONFIG_FB_HC16XX_GMA_FIRMWARE=y
@@ -45,3 +48,48 @@ CONFIG_VFAT_FS=y
 CONFIG_EXFAT_FS=y
 CONFIG_EXFAT_DEFAULT_IOCHARSET="utf8"
 CONFIG_NLS_UTF8=y
+
+# --- Trimmed from linux.config: built-in code with no hardware or no user
+# on this console (CONFIG_MODULES is off, so all of it stays in RAM) ---
+# Unix98 ptys (/dev/pts) only: the BSD ptys made 512 /dev/ptyXX and /dev/ttyXX
+# devices at every boot.
+# CONFIG_LEGACY_PTYS is not set
+# No loop devices made at boot; they still appear on demand through
+# /dev/loop-control.
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=0
+# No PS/2 port, keyboard or mouse.
+# CONFIG_KEYBOARD_ATKBD is not set
+# CONFIG_INPUT_MOUSE is not set
+# CONFIG_SERIO is not set
+# (CONFIG_KEYBOARD_GPIO, interrupt-driven gpio-keys, stays for now: the
+# buttons are polled today, and moving them to interrupts is still open.)
+# USB host side: no USB-serial adapters and no CDC-ACM modems (the console's
+# own serial shell is the ACM gadget, USB_CONFIGFS_ACM above); the gadget uses
+# ACM only, not FunctionFS.
+# CONFIG_USB_SERIAL is not set
+# CONFIG_USB_ACM is not set
+# CONFIG_USB_CONFIGFS_F_FS is not set
+# a test driver that only binds to a "backlight-test" DT node
+# CONFIG_BACKLIGHT_TEST is not set
+# Root is squashfs, /boot FAT32, /share exFAT or FAT32: no ext4 (jbd2 goes
+# with it).
+# CONFIG_EXT4_FS is not set
+# The SD card has a single hardware queue, so it gets mq-deadline.
+# CONFIG_IOSCHED_BFQ is not set
+# CONFIG_MQ_IOSCHED_KYBER is not set
+# XZ was only needed for an initramfs (BLK_DEV_INITRD is off above).
+# CONFIG_XZ_DEC is not set
+# No network card: no PTP clocks, no PPS sources.
+# CONFIG_PTP_1588_CLOCK is not set
+# CONFIG_PPS is not set
+# Router features nothing here uses.
+# CONFIG_IP_ADVANCED_ROUTER is not set
+# CONFIG_IP_MROUTE is not set
+# CONFIG_TCP_CONG_ADVANCED is not set
+
+# The AVP mailbox driver (patch 0004): avp.uImage is a 5-instruction stand-in,
+# so no AVP firmware ever answers the mailbox. With the driver built, the
+# framebuffer ran a 200 ms "AVP blank" watchdog for good (5 wakeups/s) and a
+# "r36s-avp" backlight that could never work was registered next to the real
+# one. The backlight is "r36s-pwm" from nzeus-ram.
+# CONFIG_NZEUS_AVP_RPC is not set

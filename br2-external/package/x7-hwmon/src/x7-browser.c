@@ -19,6 +19,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/fb.h>
 #include <linux/input.h>
 #include <linux/kd.h>
 #include <poll.h>
@@ -29,6 +30,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -42,6 +44,11 @@
 #define MAX_SYSTEMS	64
 #define MAX_EMUS	4
 #define MAX_IN		8
+/* the depth the screen console boots in (hc16xx-gma-fb starts in ARGB8888);
+ * RetroArch's x7fb switches /dev/fb0 to 16 bits while a game runs */
+#define CONSOLE_BPP	32
+/* free space on X7DATA below which saves may no longer fit */
+#define SHARE_LOW	(8ULL << 20)
 
 /* colours (Linux console) */
 #define C_HEAD	"\033[0;1;37;44m"
@@ -118,7 +125,7 @@ static int scan_inputs(int want_pad)
 		return 0;
 	while ((e = readdir(d)) && nin < MAX_IN) {
 		unsigned long keys[(KEY_MAX + LONG_BITS) / LONG_BITS];
-		char path[64], name[96] = "";
+		char path[288], name[96] = "";
 		int fd, ok;
 
 		if (strncmp(e->d_name, "event", 5))
@@ -214,15 +221,44 @@ static void handle(const struct input_event *ev)
 	}
 }
 
+/* wait up to wait ms (-1: no limit) for button events and take them in */
+static void read_events(int wait)
+{
+	struct pollfd fds[MAX_IN];
+	int i;
+
+	for (i = 0; i < nin; i++) {
+		fds[i].fd = in_fd[i];
+		fds[i].events = POLLIN;
+	}
+	if (poll(fds, nin, wait) <= 0)
+		return;
+	for (i = 0; i < nin; i++) {
+		struct input_event ev[32];
+		ssize_t r;
+		int k;
+
+		if (!(fds[i].revents & (POLLIN | POLLERR | POLLHUP)))
+			continue;
+		r = read(in_fd[i], ev, sizeof(ev));
+		if (r < 0 && errno == ENODEV) {
+			open_inputs(0);
+			break;
+		}
+		for (k = 0; r > 0 && k < r / (ssize_t)sizeof(ev[0]); k++)
+			handle(&ev[k]);
+	}
+}
+
 /* the next button press (with auto-repeat), or -1 after timeout_ms */
 static int get_key(int timeout_ms)
 {
 	long long end = timeout_ms < 0 ? -1 : now_ms() + timeout_ms;
+	int fresh = 0;
 
 	for (;;) {
-		struct pollfd fds[MAX_IN];
 		long long t = now_ms();
-		int i, wait;
+		int wait;
 
 		if (qhead != qtail) {
 			int k = queue[qhead];
@@ -231,6 +267,14 @@ static int get_key(int timeout_ms)
 			return k;
 		}
 		if (rep_key >= 0 && t >= rep_at) {
+			/* a redraw slower than the repeat leaves the button's
+			 * release unread: take in what is pending first, or a
+			 * released key keeps moving the selection by itself */
+			if (!fresh && nin > 0) {
+				fresh = 1;
+				read_events(0);
+				continue;
+			}
 			rep_at = t + 70;
 			return rep_key;
 		}
@@ -248,27 +292,8 @@ static int get_key(int timeout_ms)
 				scan_inputs(0);
 			continue;
 		}
-		for (i = 0; i < nin; i++) {
-			fds[i].fd = in_fd[i];
-			fds[i].events = POLLIN;
-		}
-		if (poll(fds, nin, wait) <= 0)
-			continue;
-		for (i = 0; i < nin; i++) {
-			struct input_event ev[32];
-			ssize_t r;
-			int k;
-
-			if (!(fds[i].revents & (POLLIN | POLLERR | POLLHUP)))
-				continue;
-			r = read(in_fd[i], ev, sizeof(ev));
-			if (r < 0 && errno == ENODEV) {
-				open_inputs(0);
-				break;
-			}
-			for (k = 0; r > 0 && k < r / (ssize_t)sizeof(ev[0]); k++)
-				handle(&ev[k]);
-		}
+		read_events(wait);
+		fresh = 1;
 	}
 }
 
@@ -426,14 +451,25 @@ static void load_list(struct list *l, const char *path)
 	if (!d)
 		return;
 	while ((e = readdir(d))) {
-		char full[1024];
-		struct stat st;
+		int dir;
 
 		if (hidden(e->d_name))
 			continue;
-		snprintf(full, sizeof(full), "%s/%s", path, e->d_name);
-		if (stat(full, &st) || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
+		/* exFAT and FAT give the type with the name; stat() only
+		 * when it is unknown, or to follow a link */
+		if (e->d_type == DT_DIR || e->d_type == DT_REG) {
+			dir = e->d_type == DT_DIR;
+		} else if (e->d_type == DT_UNKNOWN || e->d_type == DT_LNK) {
+			char full[1280];
+			struct stat st;
+
+			snprintf(full, sizeof(full), "%s/%s", path, e->d_name);
+			if (stat(full, &st) || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
+				continue;
+			dir = S_ISDIR(st.st_mode);
+		} else {
 			continue;
+		}
 		if (l->n == l->cap) {
 			int cap = l->cap ? l->cap * 2 : 64;
 			struct entry *ne = realloc(l->e, cap * sizeof(*ne));
@@ -444,7 +480,7 @@ static void load_list(struct list *l, const char *path)
 			l->cap = cap;
 		}
 		l->e[l->n].name = strdup(e->d_name);
-		l->e[l->n].dir = S_ISDIR(st.st_mode);
+		l->e[l->n].dir = dir;
 		if (l->e[l->n].name)
 			l->n++;
 	}
@@ -543,11 +579,92 @@ static void screen_setup(void)
 	flush_out();
 }
 
+/* Put /dev/fb0 back in the console's depth after a game. An emulator that
+ * crashed or was killed never restores it, and even after a clean exit fbcon
+ * can put back the 16-bit mode it last saw. Call it in KD_TEXT only: in
+ * KD_GRAPHICS fbcon doesn't take note of the change and puts its old mode
+ * back at the next switch to KD_TEXT. */
+static void console_depth(void)
+{
+	struct fb_var_screeninfo v;
+	int fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
+
+	if (fd < 0)
+		return;
+	if (ioctl(fd, FBIOGET_VSCREENINFO, &v) == 0 && v.bits_per_pixel != CONSOLE_BPP) {
+		v.bits_per_pixel = CONSOLE_BPP;
+		v.activate = FB_ACTIVATE_NOW;
+		ioctl(fd, FBIOPUT_VSCREENINFO, &v);
+	}
+	close(fd);
+}
+
+/* Is an emulator already running (started from the USB shell with
+ * x7-launch, which execs it, so it shows under its own name)? */
+static int game_running(void)
+{
+	DIR *d = opendir("/proc");
+	struct dirent *e;
+	int found = 0;
+
+	if (!d)
+		return 0;
+	while (!found && (e = readdir(d))) {
+		char path[288], comm[32];
+		ssize_t r;
+		int fd;
+
+		if (!isdigit((unsigned char)e->d_name[0]))
+			continue;
+		snprintf(path, sizeof(path), "/proc/%s/comm", e->d_name);
+		fd = open(path, O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			continue;
+		r = read(fd, comm, sizeof(comm) - 1);
+		close(fd);
+		if (r <= 0)
+			continue;
+		comm[r] = 0;
+		comm[strcspn(comm, "\n")] = 0;
+		found = !strcmp(comm, "retroarch") || !strcmp(comm, "pcsx4all");
+	}
+	closedir(d);
+	return found;
+}
+
+/* Why games may not save on X7DATA, or NULL. The exFAT driver turns the
+ * partition read-only after an error; a full card fails the same way.
+ * Only when X7DATA is mounted: the root file system under an empty /share is
+ * read-only anyway, and the "not ready" message covers that case. */
+static const char *share_problem(void)
+{
+	struct stat sh, root;
+	struct statvfs v;
+
+	if (stat("/share", &sh) || stat("/", &root) || sh.st_dev == root.st_dev)
+		return NULL;
+	if (statvfs("/share", &v))
+		return NULL;
+	if (v.f_flag & ST_RDONLY)
+		return "X7DATA is read-only: games will not save. Check the card on a PC.";
+	if ((unsigned long long)v.f_bavail * v.f_frsize < SHARE_LOW)
+		return "X7DATA is almost full: games may not save.";
+	return NULL;
+}
+
 static void launch(const char *emu, const char *path, const char *game)
 {
 	char label[64];
 	pid_t pid;
 	int status = 0;
+
+	/* A game started from the USB shell owns the screen, and this list
+	 * sees the same buttons: a second emulator would fight it for the
+	 * screen, the buttons and the sound. Leave all of them alone. */
+	if (game_running()) {
+		snprintf(msg, sizeof(msg), "A game is already running (started from the USB shell?)");
+		return;
+	}
 
 	snprintf(msg, sizeof(msg), "Starting %s (%s)...", game, emu_label(emu, label, sizeof(label)));
 	row(rows - 1, C_MSG, msg);
@@ -567,8 +684,14 @@ static void launch(const char *emu, const char *path, const char *game)
 	if (pid > 0)
 		while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
 			;
-	/* back from the game: our screen, our buttons */
+	/* the emulator has just written its saves and its config: get them
+	 * onto the card now, not at the next writeback ~30 s later, in case
+	 * the console hangs or loses power before that */
+	sync();
+	/* back from the game: our screen (text mode first, then the depth),
+	 * our buttons */
 	screen_setup();
+	console_depth();
 	open_inputs(1000);
 	if (pid < 0)
 		snprintf(msg, sizeof(msg), "Could not start the emulator.");
@@ -651,7 +774,7 @@ static void browse(const struct system *s, const char *rel)
 			break;
 		if ((k == K_A || k == K_X) && l.n > 0) {
 			struct entry *e = &l.e[sel];
-			char file[1024];
+			char file[1280];	/* path + "/" + a name of up to 255 bytes */
 			int emu = 0;
 
 			msg[0] = 0;
@@ -758,7 +881,9 @@ static void info(void)
 
 int main(void)
 {
-	int sel = 0, top = 0;
+	char *label[MAX_SYSTEMS + 1], buf[MAX_SYSTEMS][128];
+	const char *attr[MAX_SYSTEMS + 1];
+	int sel = 0, top = 0, n, recount = 1;
 
 	signal(SIGCHLD, SIG_DFL);
 	signal(SIGPIPE, SIG_IGN);
@@ -767,26 +892,34 @@ int main(void)
 	screen_setup();
 	open_inputs(3000);
 	load_systems();
+	n = nsys + 1;
 
 	for (;;) {
-		char *label[MAX_SYSTEMS + 1], buf[MAX_SYSTEMS][128];
-		const char *attr[MAX_SYSTEMS + 1];
-		int i, k, n = nsys + 1;
+		const char *warn;
+		int i, k;
 
-		for (i = 0; i < nsys; i++) {
-			int g = count_games(sys[i].folder);
+		/* the folders don't change while this list is shown: count the
+		 * games only at the start and when coming back from a system
+		 * or the information page, not at every key */
+		if (recount) {
+			for (i = 0; i < nsys; i++) {
+				int g = count_games(sys[i].folder);
 
-			if (g)
-				snprintf(buf[i], sizeof(buf[i]), "%-44s %5d", sys[i].name, g);
-			else
-				snprintf(buf[i], sizeof(buf[i]), "%-44s    --", sys[i].name);
-			label[i] = buf[i];
-			attr[i] = g ? C_TEXT : C_DIM;
+				if (g)
+					snprintf(buf[i], sizeof(buf[i]), "%-44s %5d", sys[i].name, g);
+				else
+					snprintf(buf[i], sizeof(buf[i]), "%-44s    --", sys[i].name);
+				label[i] = buf[i];
+				attr[i] = g ? C_TEXT : C_DIM;
+			}
+			label[nsys] = (char *)"System information";
+			attr[nsys] = C_SUB;
+			recount = 0;
 		}
-		label[nsys] = (char *)"System information";
-		attr[nsys] = C_SUB;
 		if (access(ROMS, F_OK) && !msg[0])
 			snprintf(msg, sizeof(msg), "The data partition (X7DATA) is not ready: no games to show.");
+		if (!msg[0] && (warn = share_problem()))
+			snprintf(msg, sizeof(msg), "%s", warn);
 		draw("test game list", " Systems                                       games", label, attr,
 		     n, sel, top, " A open   D-pad move   L1/R1 page");
 		k = get_key(-1);
@@ -799,5 +932,6 @@ int main(void)
 			info();
 		else
 			browse(&sys[sel], "");
+		recount = 1;
 	}
 }

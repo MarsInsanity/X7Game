@@ -6,8 +6,8 @@
 
 LIBRETRO_FBALPHA2012_NEOGEO_VERSION = e092097037d494c50d17c5144a2758d68538061b
 LIBRETRO_FBALPHA2012_NEOGEO_SITE = $(call github,libretro,fbalpha2012_neogeo,$(LIBRETRO_FBALPHA2012_NEOGEO_VERSION))
-LIBRETRO_FBALPHA2012_NEOGEO_LICENSE = FB Alpha non-commercial, MAME non-commercial
-LIBRETRO_FBALPHA2012_NEOGEO_LICENSE_FILES = src/license.txt
+LIBRETRO_FBALPHA2012_NEOGEO_LICENSE = FB Alpha non-commercial, MAME non-commercial, Zlib (zlib, minizip), Public Domain (LZMA SDK), BSD-3-Clause (un7z)
+LIBRETRO_FBALPHA2012_NEOGEO_LICENSE_FILES = src/license.txt src/dep/libs/zlib/zlib.h src/burner/un7z.cpp
 
 # The old FB Alpha code type-puns heavily: add -fno-strict-aliasing (and
 # -fsigned-char, already the MIPS default, to be explicit). The makefile

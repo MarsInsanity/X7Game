@@ -1,9 +1,9 @@
 diff --git a/Makefile.r36sx b/Makefile.r36sx
 new file mode 100644
-index 0000000..a2a922b
+index 0000000..603eea8
 --- /dev/null
 +++ b/Makefile.r36sx
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,188 @@
 +#########################################################################
 +## RetroArch for X7 Game on the R36SX (HiChip E3100, MIPS 74Kc, no GPU)
 +##
@@ -111,7 +111,9 @@ index 0000000..a2a922b
 +
 +OBJ :=
 +LINK := $(CXX)
-+DEF_FLAGS := -mtune=74kc -fomit-frame-pointer
++# 74kf2_1: the 74K with its FPU at half the core clock, as on the E3100
++# (74kc would tell GCC there is no FPU and cost every float op as a libcall)
++DEF_FLAGS := -mtune=74kf2_1 -fomit-frame-pointer
 +DEF_FLAGS += -ffunction-sections -fdata-sections
 +DEF_FLAGS += -I. -Ideps -Ideps/stb -MMD
 +DEF_FLAGS += -Wall -Wno-unused-variable
@@ -192,10 +194,10 @@ index 0000000..a2a922b
 +.PHONY: all clean
 diff --git a/gfx/drivers/x7fb_gfx.c b/gfx/drivers/x7fb_gfx.c
 new file mode 100644
-index 0000000..ec4e261
+index 0000000..e706fb2
 --- /dev/null
 +++ b/gfx/drivers/x7fb_gfx.c
-@@ -0,0 +1,660 @@
+@@ -0,0 +1,767 @@
 +/*  RetroArch - A frontend for libretro.
 + *  Copyright (C) 2026 - X7 Game
 + *
@@ -204,7 +206,9 @@ index 0000000..ec4e261
 + *  uncached framebuffer memory). The screen is driven in RGB565; frames are
 + *  scaled with nearest-neighbour lookup tables into a cached line buffer and
 + *  written to the framebuffer with sequential 32-bit stores, once per frame.
-+ *  Duplicate frames are not redrawn. Based on the structure of sdl_rs90_gfx.c.
++ *  An unchanged screen is not redrawn: duplicate (NULL) frames, the menu
++ *  until RGUI uploads a new texture, and a paused game whose picture and
++ *  on-screen message stay the same. Based on the structure of sdl_rs90_gfx.c.
 + *
 + *  RetroArch is free software: you can redistribute it and/or modify it under the terms
 + *  of the GNU General Public License as published by the Free Software Found-
@@ -277,7 +281,14 @@ index 0000000..ec4e261
 +   bool menu_active;
 +   bool was_in_menu;
 +   bool need_clear;                  /* clear the borders before the next blit */
++   bool menu_dirty;                  /* RGUI uploaded a texture not drawn yet */
 +   bool quitting;
++   /* the last game frame written to the screen, to skip redrawing it
++    * while the game is paused */
++   const void *last_frame;
++   unsigned last_w, last_h, last_pitch;
++   uint32_t last_hash;
++   char last_msg[256];               /* the on-screen message now shown */
 +   uint16_t xmap[X7FB_MAX_W];        /* output x -> source x */
 +   uint16_t ymap[X7FB_MAX_H];        /* output y -> source y */
 +   uint32_t line[X7FB_MAX_W / 2];    /* one scaled output row (cached memory) */
@@ -447,6 +458,30 @@ index 0000000..ec4e261
 +   }
 +}
 +
++/* A cheap fingerprint of a frame: 64 pixels, each on a different row and
++ * column ((k * 23) & 63 visits every column slot once). It reads the core's
++ * frame in cached memory, never the screen. */
++static uint32_t x7fb_frame_hash(const void *frame, unsigned width,
++      unsigned height, unsigned pitch, bool rgb32)
++{
++   uint32_t hash = 2166136261u;      /* FNV-1a */
++   unsigned k;
++
++   if (width == 0 || height == 0)
++      return 0;
++
++   for (k = 0; k < 64; k++)
++   {
++      unsigned x       = (((k * 23) & 63) * width) / 64;
++      unsigned y       = (k * height) / 64;
++      const uint8_t *p = (const uint8_t*)frame + (size_t)y * pitch;
++      uint32_t px      = rgb32 ? ((const uint32_t*)p)[x]
++                               : ((const uint16_t*)p)[x];
++      hash = (hash ^ px) * 16777619u;
++   }
++   return hash;
++}
++
 +/* one font pixel = a X7FB_FONT_SCALE x X7FB_FONT_SCALE block */
 +static INLINE void x7fb_font_px(x7fb_video_t *vid, unsigned x, unsigned y,
 +      uint16_t colour)
@@ -601,6 +636,17 @@ index 0000000..ec4e261
 +   }
 +   vid->orig_bpp = var.bits_per_pixel;
 +
++   /* Keep the text console from drawing over the picture. This must come
++    * before the depth change: while the console is in KD_TEXT, fbcon takes
++    * a mode change as the console's own mode, redraws itself in it, and
++    * puts that mode back whenever KD_TEXT returns, which would leave the
++    * console in 16-bit after the game. Switched first, fbcon keeps its
++    * 32-bit record and restores it at KD_TEXT, in x7fb_gfx_free or, after
++    * a crash, when the game list sets KD_TEXT again. */
++   vid->tty = open("/dev/tty0", O_RDWR | O_CLOEXEC);
++   if (vid->tty >= 0)
++      ioctl(vid->tty, KDSETMODE, KD_GRAPHICS);
++
 +   /* the whole screen runs in RGB565: half the bytes to push per frame */
 +   if (var.bits_per_pixel != 16)
 +   {
@@ -630,10 +676,10 @@ index 0000000..ec4e261
 +      goto error;
 +   }
 +
-+   /* keep the text console from drawing over the picture */
-+   vid->tty = open("/dev/tty0", O_RDWR | O_CLOEXEC);
-+   if (vid->tty >= 0)
-+      ioctl(vid->tty, KDSETMODE, KD_GRAPHICS);
++   /* fbcon no longer redraws the screen at the depth change: clear the
++    * console picture left behind, which would show as noise in RGB565
++    * until the first frame (loading the content can take seconds) */
++   x7fb_clear_screen(vid);
 +
 +   vid->rgb32         = video->rgb32;
 +   vid->scale_integer = settings->bools.video_scale_integer;
@@ -667,19 +713,28 @@ index 0000000..ec4e261
 +      unsigned pitch, const char *msg, video_frame_info_t *video_info)
 +{
 +   x7fb_video_t *vid  = (x7fb_video_t*)data;
-+#ifdef HAVE_MENU
-+   bool menu_is_alive = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
-+#endif
++   bool menu_is_alive = false;
++   bool drawn         = false;
++   bool msg_changed;
 +
 +   if (unlikely(!vid))
 +      return true;
 +
-+   /* fast-forward: the panel shows at most 60 frames per second, so
-+    * pushing more is wasted work on uncached memory */
-+   if (unlikely(video_info->input_driver_nonblock_state))
++#ifdef HAVE_MENU
++   menu_is_alive = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
++#endif
++
++   /* Fast-forward with RetroArch's own frame skipping turned off: the
++    * panel shows at most 60 frames per second, so pushing more is wasted
++    * work on uncached memory. With fastforward_frameskip on (the default)
++    * RetroArch already drops the extra frames, and a second limit here
++    * would drop some of the ones it keeps. 15 ms leaves room for jitter
++    * around the 16.7 ms frame time. The menu is always drawn. */
++   if (unlikely(video_info->input_driver_nonblock_state &&
++         !video_info->fastforward_frameskip && !menu_is_alive))
 +   {
 +      retro_time_t now = cpu_features_get_time_usec();
-+      if (now - vid->last_frame_time < 16667)
++      if (now - vid->last_frame_time < 15000)
 +         return true;
 +      vid->last_frame_time = now;
 +   }
@@ -687,6 +742,13 @@ index 0000000..ec4e261
 +#ifdef HAVE_MENU
 +   menu_driver_frame(menu_is_alive, video_info);
 +#endif
++
++   /* RetroArch passes "" when there is no message. The text is drawn over
++    * the picture, so a message that appears, changes or goes away needs a
++    * full redraw to erase the old text. */
++   if (!msg)
++      msg = "";
++   msg_changed = strncmp(msg, vid->last_msg, sizeof(vid->last_msg) - 1) != 0;
 +
 +   if (likely(!vid->menu_active))
 +   {
@@ -698,7 +760,39 @@ index 0000000..ec4e261
 +
 +      /* NULL = the core repeated the previous frame: nothing to do */
 +      if (likely(frame))
-+         x7fb_blit(vid, frame, width, height, pitch, vid->rgb32);
++      {
++         /* While the game is paused, RetroArch hands over the same cached
++          * frame 60 times a second: draw it once. The same pointer and size
++          * are not enough on their own, because cores that draw into one
++          * static buffer keep the pointer when frame advance changes the
++          * picture, so the sampled pixels must match too. The hash is only
++          * taken while paused (0 = not taken), so the first paused frame
++          * is always drawn. */
++         uint32_t hash = 0;
++         bool skip     = false;
++
++         if (unlikely(video_info->runloop_is_paused))
++         {
++            hash = x7fb_frame_hash(frame, width, height, pitch, vid->rgb32);
++            skip = !vid->need_clear && !msg_changed &&
++                  frame  == vid->last_frame &&
++                  width  == vid->last_w     &&
++                  height == vid->last_h     &&
++                  pitch  == vid->last_pitch &&
++                  hash   == vid->last_hash;
++         }
++
++         if (likely(!skip))
++         {
++            x7fb_blit(vid, frame, width, height, pitch, vid->rgb32);
++            vid->last_frame = frame;
++            vid->last_w     = width;
++            vid->last_h     = height;
++            vid->last_pitch = pitch;
++            vid->last_hash  = hash;
++            drawn           = true;
++         }
++      }
 +   }
 +   else
 +   {
@@ -708,12 +802,26 @@ index 0000000..ec4e261
 +         x7fb_set_output(vid, vid->menu_w, vid->menu_h, false, true);
 +         vid->was_in_menu = true;
 +      }
-+      x7fb_blit(vid, vid->menu_texture, vid->menu_w, vid->menu_h,
-+            vid->menu_w * sizeof(uint16_t), false);
++      /* RGUI uploads a new texture only when the menu changed (it is drawn
++       * on the next call): redraw only then, after an output change
++       * (need_clear, also set on entering the menu) or for a new message */
++      if (vid->menu_dirty || vid->need_clear || msg_changed)
++      {
++         x7fb_blit(vid, vid->menu_texture, vid->menu_w, vid->menu_h,
++               vid->menu_w * sizeof(uint16_t), false);
++         vid->menu_dirty = false;
++         vid->last_frame = NULL;     /* the game frame is gone from the screen */
++         drawn           = true;
++      }
 +   }
 +
-+   if (msg)
-+      x7fb_blit_text(vid, msg);
++   /* the text stays on the screen until the picture under it is redrawn */
++   if (drawn || msg_changed)
++   {
++      if (*msg)
++         x7fb_blit_text(vid, msg);
++      strlcpy(vid->last_msg, msg, sizeof(vid->last_msg));
++   }
 +
 +   return true;
 +}
@@ -736,8 +844,9 @@ index 0000000..ec4e261
 +      return;
 +
 +   memcpy(vid->menu_texture, frame, width * height * sizeof(uint16_t));
-+   vid->menu_w = width;
-+   vid->menu_h = height;
++   vid->menu_w     = width;
++   vid->menu_h     = height;
++   vid->menu_dirty = true;
 +}
 +
 +static void x7fb_gfx_set_nonblock_state(void *data, bool toggle,
@@ -883,7 +992,7 @@ index ca6434c..ba5114e 100644
  extern video_driver_t video_omap;
  extern video_driver_t video_exynos;
 diff --git a/menu/drivers/rgui.c b/menu/drivers/rgui.c
-index ebcd34c..04a1e99 100644
+index ebcd34c..00f6816 100644
 --- a/menu/drivers/rgui.c
 +++ b/menu/drivers/rgui.c
 @@ -1384,6 +1384,7 @@ static bool rgui_set_pixel_format_function(void)
@@ -894,3 +1003,14 @@ index ebcd34c..04a1e99 100644
              || string_is_equal(driver_ident, "xvideo"))
     {
        argb32_to_pixel_platform_format = argb32_to_rgb565;
+@@ -6681,7 +6682,9 @@ static void rgui_set_texture(void *data)
+    video_driver_state_t *video_st  = video_state_get_ptr();
+    settings_t            *settings = config_get_ptr();
+    gfx_display_t          *p_disp  = disp_get_ptr();
+-#if defined(DINGUX)
++   /* X7 Game: x7fb scales the menu itself and drops textures larger than
++    * the 640x480 screen, so an upscaled menu would turn invisible */
++#if defined(DINGUX) || defined(HAVE_X7FB)
+    unsigned internal_upscale_level = RGUI_UPSCALE_NONE;
+ #else
+    unsigned internal_upscale_level = settings->uints.menu_rgui_internal_upscale_level;

@@ -2,13 +2,20 @@
 # X7 Game: end of start-up. Save a report to the SD card
 # (x7game/logs/boot.log, readable on a PC; the previous one is kept as
 # boot-previous.log) and keep kernel messages off the console from now on,
-# so the hardware monitor's lines stay readable.
+# so they don't draw over the game list on tty1.
 test "$1" = start || exit 0
+dmesg -n 1
+# The report runs in the background: init starts the game list, the power
+# button (x7-hwmon) and the gamepad only once start-up is finished, so they
+# don't wait for it and the SD card writes. It is written under a new name
+# first, so a power-off in between leaves the last complete boot.log.
 L=/boot/x7game/logs
 if test -d "$L"; then
-	test -f "$L/boot.log" && mv -f "$L/boot.log" "$L/boot-previous.log"
-	/usr/sbin/x7-report boot > "$L/boot.log" 2>&1
-	sync
+	(
+		/usr/sbin/x7-report boot > "$L/boot.log.x7new" 2>&1
+		test -f "$L/boot.log" && mv -f "$L/boot.log" "$L/boot-previous.log"
+		mv -f "$L/boot.log.x7new" "$L/boot.log"
+		sync
+	) > /dev/null 2>&1 &
 fi
-dmesg -n 1
 exit 0

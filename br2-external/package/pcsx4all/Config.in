@@ -1,0 +1,24 @@
+config BR2_PACKAGE_PCSX4ALL
+	bool "pcsx4all"
+	depends on BR2_mipsel # MIPS dynarec, Makefile.r36sx
+	depends on BR2_INSTALL_LIBSTDCPP # gpu_unai is C++
+	depends on BR2_TOOLCHAIN_HAS_THREADS # alsa-lib
+	depends on BR2_USE_MMU
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_ALSA_LIB_PCM
+	select BR2_PACKAGE_ZLIB
+	help
+	  PCSX4ALL, a standalone PlayStation emulator for slow
+	  handhelds: gameblabla's RG350 fork (MIPS dynarec, gpu_unai
+	  with gpulib, spu_pcsxrearmed, CHD through libchdr) with the
+	  X7 Game port (Makefile.r36sx, src/port/r36sx): the picture
+	  scaled to the 640x480 framebuffer, the "X7 Game Gamepad",
+	  ALSA sound. No SDL.
+
+	    pcsx4all -iso <.cue/.bin/.img/.iso/.chd/.pbp>
+
+	  BIOS from /share/bios (scph1001.bin, scph5501.bin, ...; the
+	  HLE BIOS when there is none), memory cards and save states
+	  in /share/saves/psx, settings in /share/system/pcsx4all.
+
+	  https://github.com/gameblabla/pcsx4all_rs97_rg350

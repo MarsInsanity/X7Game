@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sun, 22 Nov 2026 17:05:00 -0800
+Subject: [PATCH] char: nzeus-r36s-audio: speaker amp off at volume 0 (X7 Game)
+
+Switch the 8002D speaker amp off while "Master Playback Volume" is 0, so
+a muted game no longer keeps the amp powered and hissing: the amp is now
+on only while a stream runs, the volume is above 0 and no headphones are
+in. The volume control re-checks the amp after it has written SND_VOL,
+so coming up from 0 the amp switches on only once the new volume is set.
+
+amp_set() becomes amp_update(), which works the state out under amp_lock
+(interrupts off) instead of before taking it. Before, an underrun stop
+from the 4 ms timer could land between the headphone poll reading
+running = true and taking the lock; the poll then switched the amp back
+on and it stayed on, with the stream stopped, until the next poll about
+50 ms later. The trigger and close now set running before the update.
+
+L19 is still left as it is at probe (driven only from the first prepare).
+---
+ drivers/char/nzeus-r36s-audio.c | 39 ++++++++++++++++++++++-----------
+ 1 file changed, 26 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/char/nzeus-r36s-audio.c b/drivers/char/nzeus-r36s-audio.c
+index c4d4b8da1..25cf48b61 100644
+--- a/drivers/char/nzeus-r36s-audio.c
++++ b/drivers/char/nzeus-r36s-audio.c
+@@ -17,7 +17,8 @@
+  *     "full minus 16 bytes";
+  *   - +0x04 BIT16 = GO; interrupts stay OFF (no handler on IRQ 5 yet): an
+  *     hrtimer polls the read index and reports elapsed periods;
+- *   - the amp (L19) is on only while a stream runs (no hiss, no battery use).
++ *   - the amp (L19) is on only while a stream runs, the volume is above 0
++ *     and no headphones are in (no hiss, no battery use).
+  * Probe touches NOTHING: the clocks, PLL and pins are set up at the first
+  * prepare. System-controller registers are shared with display, USB and SD:
+  * changed bit by bit (read-modify-write) only. SND0 is never read while its
+@@ -106,7 +107,7 @@ struct r36s_audio {
+ 	int hp_reported;		/* last SW_HEADPHONE_INSERT value sent, -1 = none */
+ 	struct input_dev *jack;		/* "R36S headphone jack" (SW_HEADPHONE_INSERT) */
+ 	struct delayed_work hp_work;	/* polls L15 */
+-	spinlock_t amp_lock;		/* amp_set() from the timer, the poll and ALSA */
++	spinlock_t amp_lock;		/* amp_update() from the timer, the poll and ALSA */
+ 	bool amp_on;			/* what we last told L19 */
+ 	struct mutex lock;		/* set-up vs. regs */
+ 	struct snd_card *card;
+@@ -133,13 +134,21 @@ static bool hp_in(struct r36s_audio *a)
+ 	return raw == a->hp_plugged;
+ }
+ 
+-/* the speaker amp: on only while playing and no headphones are in */
+-static void amp_set(struct r36s_audio *a, bool playing)
++/*
++ * the speaker amp: on only while a stream runs, the volume is above 0 (muted =
++ * nothing to hear, so no hiss and no amp current) and no headphones are in.
++ * Callers change running or volume first, then call this. The decision is made
++ * under the lock, so a stop from the timer (underrun) cannot be undone by
++ * another caller that read the state just before it. (L19 and L15 are on
++ * gpio-hc16xx, which never sleeps: fine with the lock held.)
++ */
++static void amp_update(struct r36s_audio *a)
+ {
+-	bool on = playing && !hp_in(a);
+ 	unsigned long flags;
++	bool on;
+ 
+ 	spin_lock_irqsave(&a->amp_lock, flags);
++	on = READ_ONCE(a->running) && READ_ONCE(a->volume) && !hp_in(a);
+ 	if (on != a->amp_on) {
+ 		gpiod_set_value(a->mute, on ? 0 : 1);
+ 		a->amp_on = on;
+@@ -160,7 +169,7 @@ static void hp_report(struct r36s_audio *a)
+ 		input_report_switch(a->jack, SW_HEADPHONE_INSERT, in);
+ 		input_sync(a->jack);
+ 	}
+-	amp_set(a, READ_ONCE(a->running));
++	amp_update(a);
+ }
+ 
+ static void hp_poll(struct work_struct *work)
+@@ -300,7 +309,7 @@ static enum hrtimer_restart r36s_audio_poll(struct hrtimer *t)
+ 		if (!delta && !snd_pcm_playback_hw_avail(ss->runtime))
+ 			period = true;
+ 		r36s_audio_set_wr(a, ss->runtime);		/* (a full ring may have room again) */
+-		amp_set(a, true);				/* headphones plugged/unplugged meanwhile */
++		amp_update(a);					/* headphones or volume 0 meanwhile */
+ 	}
+ 	snd_pcm_stream_unlock_irqrestore(ss, flags);
+ 	if (period)
+@@ -349,7 +358,8 @@ static int r36s_audio_close(struct snd_pcm_substream *ss)
+ 	struct r36s_audio *a = snd_pcm_substream_chip(ss);
+ 
+ 	hrtimer_cancel(&a->timer);
+-	amp_set(a, false);
++	WRITE_ONCE(a->running, false);			/* (already false after STOP) */
++	amp_update(a);					/* amp off */
+ 	a->substream = NULL;
+ 	return 0;
+ }
+@@ -387,14 +397,14 @@ static int r36s_audio_trigger(struct snd_pcm_substream *ss, int cmd)
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+ 		r36s_audio_set_wr(a, ss->runtime);
+ 		snd_rmw(a, SND_CTRL, 0, BIT(16));		/* GO */
+-		amp_set(a, true);				/* amp on (not with headphones in) */
+-		a->running = true;
++		WRITE_ONCE(a->running, true);
++		amp_update(a);					/* amp on (see amp_update()) */
+ 		hrtimer_start(&a->timer, ns_to_ktime(POLL_NS), HRTIMER_MODE_REL);
+ 		return 0;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+-		a->running = false;
+-		amp_set(a, false);				/* amp off first (no pop) */
++		WRITE_ONCE(a->running, false);
++		amp_update(a);					/* amp off first (no pop) */
+ 		snd_rmw(a, SND_CTRL, BIT(16), 0);
+ 		hrtimer_try_to_cancel(&a->timer);
+ 		return 0;
+@@ -465,11 +475,14 @@ static int r36s_vol_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uv)
+ 		return -EINVAL;
+ 	if (v == a->volume)
+ 		return 0;
+-	a->volume = v;
++	/* the hardware volume first, then a->volume: coming up from 0, the amp
++	 * (the 4 ms timer or the call below) only switches on once SND_VOL is set */
+ 	mutex_lock(&a->lock);
+ 	if (a->rate && audio_clock_on(a))
+ 		writeb(v, a->snd + SND_VOL);
++	WRITE_ONCE(a->volume, v);
+ 	mutex_unlock(&a->lock);
++	amp_update(a);		/* off at volume 0, on again above it (process context) */
+ 	return 1;
+ }
+ 

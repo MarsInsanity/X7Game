@@ -2,22 +2,27 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Assemble the X7 Game SD card image.
 
-  mkdisk.py --fat boot.vfat --root rootfs.squashfs --fat-mib 48 --root-mib 975 --out x7game.img
+  mkdisk.py --fat boot.vfat --root rootfs.squashfs --fat-mib 48 --root-mib 487 --out x7game.img
 
-Layout (MiB):
-  0 .. 1                    partition table (a normal MBR - the factory
-                            bootloader reads plain FAT32 cards: TreeFrogUI's
-                            install guide formats them on a PC)
-  1 .. 1+FAT                partition 1, FAT32 "X7GAME": the files the
-                            bootloader loads (cubegm/) and x7game/ (settings,
-                            logs).
-  1+FAT .. 1+FAT+ROOT       the root file system (squashfs), NOT in the
-                            partition table; the kernel finds it through
-                            blkdevparts= on its command line. Only the used
-                            part is in the image file (rounded up to 1 MiB).
-  1+FAT+ROOT .. end of card the data partition (exFAT "X7DATA"), not in the
-                            image: X7 Game makes it at the first start and
-                            adds it to the partition table as partition 2.
+The card layout is defined in post-image.sh (the single source of these
+numbers; the kernel command line, x7-update and S05x7data follow it). Card
+layout 2 (MiB); the image holds only the first three areas:
+  0 .. 1        partition table (a normal MBR - the factory bootloader reads
+                plain FAT32 cards: TreeFrogUI's install guide formats them on
+                a PC)
+  1 .. 49       MBR partition 1, FAT32 "X7GAME" (--fat-mib): the files the
+                bootloader loads (cubegm/) and x7game/ (settings, logs).
+  49 .. 536     system slot A (squashfs root, --root-mib), /dev/mmcblk0p2.
+                NOT in the partition table; the kernel finds it through
+                blkdevparts= on its command line. Only the used part is in
+                the image file (rounded up to 1 MiB).
+  536 .. 1024   system slot B, /dev/mmcblk0p3: not in the image and not in
+                the partition table; x7-update writes it.
+  1024 .. end   the data partition (exFAT "X7DATA"), not in the image: X7
+                Game makes it at the first start and adds it to the partition
+                table as partition 2 (for PCs); Linux sees it as
+                /dev/mmcblk0p4 through blkdevparts=. Its start never moves:
+                re-flashed cards keep it.
 """
 import argparse
 import hashlib

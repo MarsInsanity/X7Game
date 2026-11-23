@@ -16,6 +16,18 @@ set -euo pipefail
 BOARD=$(cd "$(dirname "$0")" && pwd)
 OUT=$BINARIES_DIR
 VERSION=${X7_VERSION:-dev}
+COMMIT=${X7_COMMIT:-unknown}
+# Only the characters the GitHub workflow allows: both end up in file names,
+# a sed program and the update manifest. Stop here, before anything is made,
+# not in mkupdate.py with half the images written.
+case "$VERSION$COMMIT" in
+*[!A-Za-z0-9._-]*)
+	echo "bad X7_VERSION '$VERSION' or X7_COMMIT '$COMMIT': only A-Z a-z 0-9 . _ - are allowed"
+	exit 1 ;;
+esac
+# Earlier results in a reused output directory (another version, or a build
+# with the V2.7 key) must not pass for this build's.
+rm -f "$OUT"/x7game-*.img "$OUT"/x7game-*.json "$OUT"/x7game-*.x7update
 
 # ---- SD card layout (MiB); layout 2. The kernel command line, x7-update and
 # S05x7data must match. ----
@@ -35,12 +47,19 @@ SLOT_B_MIB=488
 DATA_START_MIB=1024
 [ $((1 + FAT_MIB + SLOT_A_MIB + SLOT_B_MIB)) = "$DATA_START_MIB" ] || { echo "layout does not add up"; exit 1; }
 PARTS="blkdevparts=mmcblk0:${FAT_MIB}M@1M(x7boot),${SLOT_A_MIB}M(x7rootA),${SLOT_B_MIB}M(x7rootB),-(x7data)"
-# bootargs for a kernel that starts system slot $1 (A or B)
+# bootargs for a kernel that starts system slot $1 (A or B).
+# sysctl.vm.compaction_proactiveness=0 turns off proactive memory compaction.
+# With it on, kcompactd wakes every 500 ms and, once the page cache has used up
+# the free 4 MiB blocks it aims for (nothing here needs them: no huge pages, no
+# CMA), moves pages across the whole RAM on the only core while a game runs;
+# only after a pass with no progress does it back off, for 32 s. Compaction
+# for an allocation that needs it (direct or through kswapd) still works.
 bootargs() {
 	local root=/dev/mmcblk0p2
 	[ "$1" = B ] && root=/dev/mmcblk0p3
 	echo "console=tty0 root=$root rootfstype=squashfs ro rootwait $PARTS" \
-		"panic=0 clk_ignore_unused nzclk=900 consoleblank=0 loglevel=5 vt.global_cursor_default=0"
+		"panic=0 clk_ignore_unused nzclk=900 consoleblank=0 loglevel=5 vt.global_cursor_default=0" \
+		"sysctl.vm.compaction_proactiveness=0"
 }
 
 # first existing file of a list (no pipelines: pipefail + a missing file
@@ -68,6 +87,9 @@ fi
 SYSMAP=$(first "$BUILD_DIR"/linux-custom/System.map)
 for slot in A B; do
 	echo ">>> X7 Game: boot files for system slot $slot"
+	# Start empty: mkx7boot.py writes the V2.7 files only when it has the key,
+	# and old ones would become a v27protected image with an old kernel.
+	rm -rf "$OUT/boot-files-$slot"
 	python3 "$BOARD/mkx7boot.py" --vmlinux "$OUT/vmlinux" ${SYSMAP:+--system-map "$SYSMAP"} \
 		--dts "$BOARD/x7game-r36sx.dts" \
 		--bootargs "$(bootargs $slot)" --cross "$CROSS" --dtc "$HOST_DIR/bin/dtc" \
@@ -115,7 +137,7 @@ make_card() {
 make_update() {
 	echo ">>> X7 Game: $1.x7update"
 	python3 "$BOARD/mkupdate.py" --out "$OUT/$1.x7update" --version "$VERSION" \
-		--commit "${X7_COMMIT:-unknown}" --variant "$2" --layout "$LAYOUT" \
+		--commit "$COMMIT" --variant "$2" --layout "$LAYOUT" \
 		--kernel-a "$3" --kernel-b "$4" --avp "$5" --stock "$6" \
 		--logo "$OUT/boot-files/xgame-logo.bmp" --readme "$BOARD/sdcard/README.txt" \
 		--version-txt "$OUT/boot-files/VERSION.txt" --root "$OUT/rootfs.squashfs"

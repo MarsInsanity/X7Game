@@ -6,8 +6,8 @@
 
 LIBRETRO_FBALPHA2012_CPS2_VERSION = e3f3ae46f120228b74d41e2b2862f1fbf1d7eb5b
 LIBRETRO_FBALPHA2012_CPS2_SITE = $(call github,libretro,fbalpha2012_cps2,$(LIBRETRO_FBALPHA2012_CPS2_VERSION))
-LIBRETRO_FBALPHA2012_CPS2_LICENSE = FB Alpha non-commercial, MAME non-commercial
-LIBRETRO_FBALPHA2012_CPS2_LICENSE_FILES = src/license.txt
+LIBRETRO_FBALPHA2012_CPS2_LICENSE = FB Alpha non-commercial, MAME non-commercial, Zlib (zlib, minizip)
+LIBRETRO_FBALPHA2012_CPS2_LICENSE_FILES = src/license.txt src/dep/libs/zlib/zlib.h
 
 # The old FB Alpha code type-puns heavily: add -fno-strict-aliasing (and
 # -fsigned-char, already the MIPS default, to be explicit). The makefile

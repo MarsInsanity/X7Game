@@ -1,0 +1,112 @@
+frontend: build without SDL for the X7 Game (R36SX) port
+
+With NO_SDL the menu reads its buttons from the port (port_menu_keys(),
+port_menu_keys_reset()) instead of SDL key events. With R36SX: title
+"pcsx4all 2.4 for X7 Game", a button hint line, "Quit to game list", and no
+"NTSC Resolution Fix" item (it only affects hardware scaling).
+diff --git a/src/port/common/frontend.c b/src/port/common/frontend.c
+index 423e891..83b8b15 100755
+--- a/src/port/common/frontend.c
++++ b/src/port/common/frontend.c
+@@ -15,7 +15,9 @@
+ #include "cdrom_hacks.h"
+ #include "cheat.h"
+ 
++#ifndef NO_SDL
+ #include <SDL.h>
++#endif
+ 
+ /* MAXPATHLEN inclusion */
+ #ifdef __MINGW32__
+@@ -48,11 +50,27 @@ enum  {
+ };
+ 
+ #define _KEY_BACK   (KEY_SELECT|KEY_B)
++
++#ifdef R36SX
++#define QUIT_LABEL "Quit to game list"
++#else
++#define QUIT_LABEL "Quit"
++#endif
++
+ extern char sstatesdir[MAXPATHLEN];
+ static int saveslot = -1;
+ static uint16_t* sshot_img; // Ptr to active image in savestate menu
+ static int sshot_img_num;   // Which slot above image is loaded for
+ 
++#ifdef NO_SDL
++/* The port reads the buttons (port.h): the KEY_* bits held now. */
++static inline void key_reset() { port_menu_keys_reset(); }
++
++static unsigned int key_read(void)
++{
++	return port_menu_keys();
++}
++#else
+ static uint32_t ret = 0;
+ 
+ static inline void key_reset() { ret = 0; }
+@@ -114,6 +132,7 @@ static unsigned int key_read(void)
+ 
+ 	return ret;
+ }
++#endif /* NO_SDL */
+ 
+ struct dir_item {
+ 	char	*name;
+@@ -1040,7 +1059,7 @@ static MENUITEM gui_GameMenuItems[] =
+   {(char *)"GPU settings", &gui_GPUSettings, NULL, NULL, NULL},
+   {(char *)"SPU settings", &gui_SPUSettings, NULL, NULL, NULL},
+   {(char *)"Core settings", &gui_Settings, NULL, NULL, NULL},
+-  {(char *)"Quit", &gui_Quit, NULL, NULL, NULL},
++  {(char *)QUIT_LABEL, &gui_Quit, NULL, NULL, NULL},
+   {0}
+ };
+ static MENUITEM gui_GameMenuItems_WithCheats[] =
+@@ -1052,7 +1071,7 @@ static MENUITEM gui_GameMenuItems_WithCheats[] =
+   {(char *)"SPU settings", &gui_SPUSettings, NULL, NULL, NULL},
+   {(char *)"Core settings", &gui_Settings, NULL, NULL, NULL},
+   {(char *)"Cheats", &gui_Cheats, NULL, NULL, NULL},
+-  {(char *)"Quit", &gui_Quit, NULL, NULL, NULL},
++  {(char *)QUIT_LABEL, &gui_Quit, NULL, NULL, NULL},
+   {0}
+ };
+ 
+@@ -1555,6 +1574,7 @@ static void videoscaling_hint() {
+ #endif //USE_GPULIB
+ 
+ #ifdef GPU_UNAI
++#ifndef R36SX /* no effect without a hardware scaler */
+ static int ntsc_fix_alter(uint32_t keys)
+ {
+ 	if (keys & KEY_RIGHT) {
+@@ -1574,6 +1594,7 @@ static char *ntsc_fix_show()
+ 	sprintf(buf, "%s", gpu_unai_config_ext.ntsc_fix ? "on" : "off");
+ 	return buf;
+ }
++#endif /* !R36SX */
+ 
+ static int interlace_alter(uint32_t keys)
+ {
+@@ -1731,7 +1752,9 @@ static MENUITEM gui_GPUSettingsItems[] = {
+ 	#endif
+ #endif
+ #ifdef GPU_UNAI
++#ifndef R36SX
+ 	{(char *)"NTSC Resolution Fix  ", NULL, &ntsc_fix_alter, &ntsc_fix_show, NULL},
++#endif
+ 	{(char *)"Interlace            ", NULL, &interlace_alter, &interlace_show, NULL},
+ 	{(char *)"Dithering            ", NULL, &dithering_alter, &dithering_show, NULL},
+ 	{(char *)"Lighting             ", NULL, &lighting_alter, &lighting_show, NULL},
+@@ -2074,7 +2097,10 @@ static void ShowMenu(MENU *menu)
+ 	port_printf(menu->x - 3 * 8, menu->y + cur * 10, "-->");
+ 
+ 	// general copyrights info
+-#if defined(RG350)
++#if defined(R36SX)
++	port_printf(8 * 8, 10, "pcsx4all 2.4 for X7 Game");
++	port_printf(7 * 8, 230, "A: OK   B: Back   FN: Game");
++#elif defined(RG350)
+ 	port_printf(8 * 8, 10, "pcsx4all 2.4 for RG350");
+ #else
+ 	port_printf(8 * 8, 10, "pcsx4all 2.4 for GCW-Zero");

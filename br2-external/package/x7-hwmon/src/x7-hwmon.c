@@ -2,9 +2,11 @@
 /*
  * x7-hwmon - the X7 Game console's hardware monitor.
  *
- * Runs in the background (started by init). It prints the state of the
- * hardware once, then "Welcome to X7 Game!", then one line for every
- * hardware event:
+ * Runs in the background (started by init, which discards its output). It
+ * logs the state of the hardware once, then "Welcome to X7 Game!", then one
+ * line for every hardware event to /run/x7-events.log (watch it over the USB
+ * shell with "tail -f /run/x7-events.log"; /run is in RAM, so the log is cut
+ * to its newest 64 KiB whenever it passes 256 KiB):
  *   - every button press and release (D-pad, A, B, X, Y, L1, L2, R1, R2,
  *     SELECT, START, FN, VOL+, VOL-, POWER);
  *   - headphone jack plugged / unplugged (the kernel switches the audio
@@ -12,13 +14,15 @@
  *   - the DC port (charger) plugged / unplugged, and the battery percentage
  *     whenever it goes up or down;
  *   - the OTG port connected to / disconnected from a computer;
- *   - a card inserted into / removed from TF2, with its size.
- * POWER pressed turns the console off. VOL+/VOL- change the volume.
- * Every line also goes to /run/x7-events.log (watch it over the USB shell
- * with "tail -f /run/x7-events.log").
+ *   - a second card the kernel sees (USB storage; the kernel does not find
+ *     TF2 yet) inserted / removed, with its size.
+ * POWER pressed turns the console off, and so does a battery that stays at
+ * or below battery_off_level (x7game.cfg). VOL+/VOL- change the volume.
+ * Started by hand from a terminal, it prints the lines there too.
  *
  *   x7-hwmon               monitor (what init runs)
- *   x7-hwmon --status      print the state once and exit
+ *   x7-hwmon --status      print the state to stdout once and exit (used by
+ *                          x7-status, x7-console and the game list)
  *   x7-hwmon --colortest   draw colour gradients on the screen for 8 s
  */
 #define _GNU_SOURCE
@@ -39,6 +43,7 @@
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/sysinfo.h>
@@ -48,6 +53,8 @@
 
 #define MAX_INPUTS	16
 #define EVENT_LOG	"/run/x7-events.log"
+#define EVENT_LOG_MAX	(256 * 1024)	/* cut the log when it passes this... */
+#define EVENT_LOG_KEEP	(64 * 1024)	/* ...to its newest 64 KiB */
 #define CONF		"/run/x7game.conf"
 
 /* battery: stock-scale ADC level (241 * raw / reference), measured by NZEUS
@@ -55,17 +62,18 @@
 #define LEVEL_EMPTY	128
 #define LEVEL_FULL	175
 #define BAT_SAMPLES	16
+#define BATTERY_OFF_DEFAULT	130	/* battery_off_level without a valid setting */
 
-/* TF1/TF2 controller (DesignWare MSHC): CDETECT register, read only */
-#define MSHC_BASE	0x1884c000u
-#define MSHC_CDETECT	0x50
-
-enum cat { C_SYS, C_BTN, C_AUDIO, C_POWER, C_USB, C_TF2 };
-static const char *const cat_name[] = { "SYSTEM", "BUTTON", "AUDIO", "POWER", "USB", "TF2" };
+enum cat { C_SYS, C_BTN, C_AUDIO, C_POWER, C_USB, C_CARDS };
+static const char *const cat_name[] = { "SYSTEM", "BUTTON", "AUDIO", "POWER", "USB", "CARDS" };
 static const char *const cat_color[] = { "1;37", "1;36", "1;35", "1;33", "1;34", "1;32" };
 
 static FILE *event_log;
 static int use_color = 1;
+/* print the lines on stdout too: always for --status (x7-browser reads it
+ * through a pipe); in monitor mode only on a terminal, or when the event log
+ * could not be opened (init sends the monitor's stdout to /dev/null) */
+static int to_stdout = 1;
 
 struct input {
 	int fd;
@@ -85,22 +93,56 @@ static double uptime(void)
 	return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+/* /run is a small tmpfs in RAM and every button press is logged: once the
+ * event log passes EVENT_LOG_MAX, cut it in place to its newest
+ * EVENT_LOG_KEEP bytes (from the start of a line). The file is not renamed
+ * and stays open in append mode, so "tail -f" (x7-console) keeps following
+ * it. On any error the log simply carries on as it is. */
+static void cap_event_log(void)
+{
+	long size = ftell(event_log);
+	int fd = fileno(event_log);
+	char *keep, *start;
+	ssize_t n;
+
+	if (size <= EVENT_LOG_MAX || fd < 0)
+		return;
+	keep = malloc(EVENT_LOG_KEEP);
+	if (!keep)
+		return;
+	n = pread(fd, keep, EVENT_LOG_KEEP, (off_t)size - EVENT_LOG_KEEP);
+	start = n > 0 ? memchr(keep, '\n', n) : NULL;
+	if (start && ftruncate(fd, 0) == 0) {
+		start++;
+		/* O_APPEND: this lands at the start of the now empty file */
+		if (write(fd, start, keep + n - start) < 0) {
+			/* nothing to do: the log starts again from empty */
+		}
+		fseek(event_log, 0, SEEK_END);	/* stdio: the file changed under it */
+	}
+	free(keep);
+}
+
 static void say(enum cat c, const char *fmt, ...)
 {
 	char msg[512];
+	double t = uptime();
 	va_list ap;
 
 	va_start(ap, fmt);
 	vsnprintf(msg, sizeof(msg), fmt, ap);
 	va_end(ap);
-	if (use_color)
-		printf("[%7.2f] \033[%sm%-6s\033[0m %s\n", uptime(), cat_color[c], cat_name[c], msg);
-	else
-		printf("[%7.2f] %-6s %s\n", uptime(), cat_name[c], msg);
-	fflush(stdout);
+	if (to_stdout) {
+		if (use_color)
+			printf("[%7.2f] \033[%sm%-6s\033[0m %s\n", t, cat_color[c], cat_name[c], msg);
+		else
+			printf("[%7.2f] %-6s %s\n", t, cat_name[c], msg);
+		fflush(stdout);
+	}
 	if (event_log) {
-		fprintf(event_log, "[%7.2f] %-6s %s\n", uptime(), cat_name[c], msg);
+		fprintf(event_log, "[%7.2f] %-6s %s\n", t, cat_name[c], msg);
 		fflush(event_log);
+		cap_event_log();
 	}
 }
 
@@ -144,21 +186,25 @@ static void find_path(const char *pattern, char *out, size_t len)
 	}
 }
 
-/* value of KEY=... in /run/x7game.conf (copied from the SD card at boot) */
-static int conf_int(const char *key, int fallback)
+/* value of KEY=... in /run/x7game.conf (the defaults, then x7game.cfg from
+ * the SD card, copied at boot: the last line wins); 0 = found */
+static int conf_get(const char *key, char *out, size_t len)
 {
 	char line[256];
 	size_t klen = strlen(key);
-	int value = fallback;
+	int found = -1;
 	FILE *f = fopen(CONF, "re");
 
 	if (!f)
-		return fallback;
+		return -1;
 	while (fgets(line, sizeof(line), f))
-		if (!strncmp(line, key, klen) && line[klen] == '=')
-			value = atoi(line + klen + 1);
+		if (!strncmp(line, key, klen) && line[klen] == '=') {
+			line[strcspn(line, "\r\n")] = 0;
+			snprintf(out, len, "%s", line + klen + 1);
+			found = 0;
+		}
 	fclose(f);
-	return value;
+	return found;
 }
 
 static void run_detached(char *const argv[])
@@ -243,7 +289,7 @@ static void scan_inputs(void)
 		return;
 	while ((e = readdir(d)))
 		if (!strncmp(e->d_name, "event", 5)) {
-			snprintf(node, sizeof(node), "/dev/input/%s", e->d_name);
+			snprintf(node, sizeof(node), "/dev/input/%.20s", e->d_name);	/* eventN */
 			add_input(node);
 		}
 	closedir(d);
@@ -401,7 +447,9 @@ static char stock_levels[256];	/* .../188184d0.power/stock_levels */
 static int bat_samples[BAT_SAMPLES], bat_n, bat_i;
 static int bat_shown = -1;	/* last percentage printed */
 static int dc_online = -1, dc_candidate = -1;
-static int critical_seconds;
+static int battery_off_level = BATTERY_OFF_DEFAULT;	/* read once at start; 0 = off */
+static double critical_seconds = -1;	/* time spent at or below it; -1 = not low */
+static double critical_last;		/* uptime of the last critical_tick() */
 
 static int battery_level(void)
 {
@@ -495,7 +543,9 @@ static void dc_tick(int initial)
 		if (online == dc_candidate) {
 			dc_online = online;
 			dc_report(online, 0);
-			bat_n = 0;	/* the charger shifts the level: start averaging again */
+			/* the charger shifts the level: start averaging again */
+			bat_n = 0;
+			bat_i = 0;
 		}
 		dc_candidate = online;
 	} else {
@@ -503,25 +553,63 @@ static void dc_tick(int initial)
 	}
 }
 
-/* power off cleanly before the battery runs out (not while charging); the
- * hardware itself dies at about level 128 */
-static void critical_tick(void)
+/* battery_off_level from x7game.cfg, read once at start: empty, not a whole
+ * number or outside 0..LEVEL_FULL means the default; 0 switches the
+ * low-battery power-off off */
+static void read_battery_off_level(void)
 {
-	int cutoff = conf_int("battery_off_level", 130);
-	int lvl;
+	char value[256], *end;
+	long v;
 
-	if (dc_online == 1) {
-		critical_seconds = 0;
+	if (conf_get("battery_off_level", value, sizeof(value)))
+		return;
+	errno = 0;
+	v = strtol(value, &end, 10);
+	if (end == value || *end || errno || v < 0 || v > LEVEL_FULL) {
+		say(C_POWER, "battery_off_level=%s is not a level from 0 to %d: using %d",
+		    value, LEVEL_FULL, BATTERY_OFF_DEFAULT);
 		return;
 	}
-	lvl = bat_n ? bat_samples[(bat_i + BAT_SAMPLES - 1) % BAT_SAMPLES] : battery_level();
-	if (lvl > 0 && lvl <= cutoff) {
-		if (++critical_seconds == 1)
-			say(C_POWER, "Battery critically low (level %d): turning off in 30 s unless a charger is plugged in", lvl);
+	battery_off_level = (int)v;
+}
+
+/* power off cleanly before the battery runs out (not while charging); the
+ * hardware itself dies at about level 128. One reading jumps by about
+ * +-2 levels, so this uses the average of the stored samples (in tenths of a
+ * level, both sides): it counts the time while the average is at or below
+ * battery_off_level, and starts again only once the average is more than one
+ * level above it. */
+static void critical_tick(void)
+{
+	long sum = 0, avg10;
+	int i, n = 0;
+	double now = uptime(), elapsed = now - critical_last;
+
+	critical_last = now;
+	if (dc_online == 1 || battery_off_level <= 0) {
+		critical_seconds = -1;
+		return;
+	}
+	for (i = 0; i < bat_n; i++)
+		if (bat_samples[i] > 0) {
+			sum += bat_samples[i];
+			n++;
+		}
+	if (!n)
+		return;
+	avg10 = sum * 10 / n;
+	if (avg10 <= battery_off_level * 10L) {
+		if (critical_seconds < 0) {
+			critical_seconds = 0;
+			say(C_POWER, "Battery critically low (level %ld.%ld): turning off in 30 s unless a charger is plugged in",
+			    avg10 / 10, avg10 % 10);
+		} else {
+			critical_seconds += elapsed;
+		}
 		if (critical_seconds >= 30)
 			power_off("Battery critically low");
-	} else {
-		critical_seconds = 0;
+	} else if (avg10 > (battery_off_level + 1) * 10L) {
+		critical_seconds = -1;		/* clearly above it again */
 	}
 }
 
@@ -575,13 +663,11 @@ static void otg_tick(int initial)
 	}
 }
 
-/* ------------------------------------------------------------------- TF2 */
+/* ------------------------------------------- extra cards (TF2, USB storage) */
 
 #define MAX_CARDS 8
 static char cards[MAX_CARDS][32];
 static int ncards = -1;
-static volatile uint32_t *mshc;
-static uint32_t cdetect = 0xffffffff;
 
 static int is_extra_card(const char *name)
 {
@@ -597,26 +683,28 @@ static void card_report(const char *name, int inserted)
 	const char *slot = name[0] == 's' ? "USB storage" : "TF2";
 
 	if (!inserted) {
-		say(C_TF2, "%s: card REMOVED (%s)", slot, name);
+		say(C_CARDS, "%s: card REMOVED (%s)", slot, name);
 		return;
 	}
-	snprintf(path, sizeof(path), "/sys/block/%s/size", name);
+	snprintf(path, sizeof(path), "/sys/block/%.31s/size", name);	/* cards[] names */
 	sectors = (unsigned long long)read_long(path, 0);
 	format_size(sectors * 512ULL, size, sizeof(size));
-	say(C_TF2, "%s: card INSERTED - %s (%llu bytes, /dev/%s)", slot, size, sectors * 512ULL, name);
+	say(C_CARDS, "%s: card INSERTED - %s (%llu bytes, /dev/%s)", slot, size, sectors * 512ULL, name);
 }
 
-static void tf2_tick(int initial)
+static void cards_tick(int initial)
 {
 	char now[MAX_CARDS][32];
-	int n = 0, i, j;
+	int n = 0, i, j, tf2 = 0;
 	DIR *d = opendir("/sys/block");
 	struct dirent *e;
 
 	if (d) {
 		while ((e = readdir(d)) && n < MAX_CARDS)
-			if (is_extra_card(e->d_name))
-				snprintf(now[n++], sizeof(now[0]), "%s", e->d_name);
+			if (is_extra_card(e->d_name)) {
+				tf2 |= e->d_name[0] == 'm';	/* mmcblk1 and up */
+				snprintf(now[n++], sizeof(now[0]), "%.31s", e->d_name);
+			}
 		closedir(d);
 	}
 	for (i = 0; i < n; i++) {		/* new cards */
@@ -633,34 +721,12 @@ static void tf2_tick(int initial)
 		if (i == n)
 			card_report(cards[j], 0);
 	}
-	if (initial && !n)
-		say(C_TF2, "TF2: empty");
+	/* the kernel has never seen the TF2 slot (one SD controller, see
+	 * docs/HARDWARE.md): don't claim it is empty */
+	if (initial && !tf2)
+		say(C_CARDS, "TF2: not supported yet");
 	memcpy(cards, now, sizeof(now));
 	ncards = n;
-
-	/* diagnostic: the SD controller's card-detect lines (bit 0 = TF1,
-	 * bit 1 = a possible second slot), to find out how TF2 is wired */
-	if (mshc) {
-		uint32_t v = mshc[MSHC_CDETECT / 4];
-
-		if (cdetect != 0xffffffff && v != cdetect)
-			say(C_TF2, "TF2 probe: SD card-detect register changed %08x -> %08x (please report this)",
-			    cdetect, v);
-		cdetect = v;
-	}
-}
-
-static void map_mshc(void)
-{
-	void *p;
-	int fd = open("/dev/mem", O_RDONLY | O_SYNC | O_CLOEXEC);
-
-	if (fd < 0)
-		return;
-	p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, MSHC_BASE);
-	close(fd);
-	if (p != MAP_FAILED)
-		mshc = p;
 }
 
 /* ---------------------------------------------------------------- status */
@@ -686,15 +752,17 @@ static void data_status(void)
 	if (fstype[0] && statvfs("/share", &st) == 0) {
 		format_size((unsigned long long)st.f_blocks * st.f_frsize, total, sizeof(total));
 		format_size((unsigned long long)st.f_bavail * st.f_frsize, avail, sizeof(avail));
-		say(C_TF2, "Data: X7DATA (%s) at /share, %s, %s free - your ROMs, saves and media",
+		say(C_CARDS, "Data: X7DATA (%s) at /share, %s, %s free - your ROMs, saves and media",
 		    fstype, total, avail);
 	} else if (!read_file("/run/x7-data.state", state, sizeof(state))) {
-		say(C_TF2, "Data: %s", state);
+		say(C_CARDS, "Data: %s", state);
 	} else {
-		say(C_TF2, "Data: no data partition");
+		say(C_CARDS, "Data: no data partition");
 	}
 }
 
+/* at_boot: 0 = --status, 1 = the monitor's first start, 2 = the monitor
+ * started again by init (it had stopped) */
 static void status_lines(int at_boot)
 {
 	char buf[256], release[96] = "X7 Game", path[256];
@@ -715,14 +783,17 @@ static void status_lines(int at_boot)
 	uname(&u);
 	{
 		const char *slot = "?";
+		char cmdline[1024];	/* the command line is longer than buf */
 
-		if (!read_file("/proc/cmdline", buf, sizeof(buf)))
-			slot = strstr(buf, "root=/dev/mmcblk0p2 ") ? "A" :
-			       strstr(buf, "root=/dev/mmcblk0p3 ") ? "B" : "?";
+		if (!read_file("/proc/cmdline", cmdline, sizeof(cmdline)))
+			slot = strstr(cmdline, "root=/dev/mmcblk0p2 ") ? "A" :
+			       strstr(cmdline, "root=/dev/mmcblk0p3 ") ? "B" : "?";
 		say(C_SYS, "%s - Linux %s (%s), system slot %s", release, u.release, u.machine, slot);
 	}
-	if (at_boot)
+	if (at_boot == 1)
 		say(C_SYS, "Started in %.1f s (kernel + system; the bootloader's logo time is extra)", uptime());
+	else if (at_boot == 2)
+		say(C_SYS, "Hardware monitor restarted (up for %.0f s)", uptime());
 	else
 		say(C_SYS, "Up for %.0f s", uptime());
 	if (!read_file("/sys/class/graphics/fb0/virtual_size", buf, sizeof(buf)))
@@ -739,10 +810,10 @@ static void status_lines(int at_boot)
 	snprintf(path, sizeof(path), "/sys/block/mmcblk0/size");
 	if (read_long(path, 0) > 0) {
 		format_size((unsigned long long)read_long(path, 0) * 512ULL, buf, sizeof(buf));
-		say(C_TF2, "TF1: X7 Game system card, %s", buf);
+		say(C_CARDS, "TF1: X7 Game system card, %s", buf);
 	}
 	data_status();
-	tf2_tick(1);
+	cards_tick(1);
 	battery_tick(1);
 	dc_tick(1);
 	otg_tick(1);
@@ -825,8 +896,8 @@ static int colortest(void)
 
 int main(int argc, char **argv)
 {
-	int ino, status_only = argc > 1 && !strcmp(argv[1], "--status");
-	double next_battery = 0, next_fast = 0;
+	int ino, restarted, status_only = argc > 1 && !strcmp(argv[1], "--status");
+	double next_battery, next_fast;
 	struct sigaction sa = { .sa_handler = SIG_IGN, .sa_flags = SA_NOCLDWAIT };
 
 	if (argc > 1 && !strcmp(argv[1], "--colortest"))
@@ -838,15 +909,22 @@ int main(int argc, char **argv)
 	find_path("/sys/bus/platform/devices/*.power/stock_levels", stock_levels, sizeof(stock_levels));
 	find_path("/sys/bus/platform/devices/*.audio/headphones", audio_sysfs, sizeof(audio_sysfs));
 	scan_inputs();
-	map_mshc();
 	if (status_only) {
 		status_lines(0);
 		return 0;
 	}
-	event_log = fopen(EVENT_LOG, "ae");
-	status_lines(1);
-	printf("\n%sWelcome to X7 Game!%s\n\n", use_color ? "\033[1;32m" : "", use_color ? "\033[0m" : "");
-	fflush(stdout);
+	/* nothing below is urgent: let the kernel run our timeouts up to 50 ms
+	 * late, together with its own wakeups (input events still wake us at
+	 * once) */
+	prctl(PR_SET_TIMERSLACK, 50000000UL);
+	/* the log is already there when init starts us again after a crash */
+	restarted = access(EVENT_LOG, F_OK) == 0;
+	event_log = fopen(EVENT_LOG, "a+e");	/* +: cap_event_log() reads it back */
+	to_stdout = isatty(1) || !event_log;
+	status_lines(restarted ? 2 : 1);
+	read_battery_off_level();
+	if (isatty(1))
+		printf("\n%sWelcome to X7 Game!%s\n\n", use_color ? "\033[1;32m" : "", use_color ? "\033[0m" : "");
 	if (event_log) {
 		fprintf(event_log, "Welcome to X7 Game!\n");
 		fflush(event_log);
@@ -855,10 +933,13 @@ int main(int argc, char **argv)
 	ino = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
 	if (ino >= 0)
 		inotify_add_watch(ino, "/dev/input", IN_CREATE);
+	/* status_lines() did the first round: the ticks start from now on */
+	next_fast = uptime() + 0.5;
+	next_battery = next_fast + 0.5;
 	for (;;) {
 		struct pollfd fds[MAX_INPUTS + 1];
-		int i, n = 0;
-		double now;
+		int i, n = 0, timeout;
+		double now, next;
 
 		for (i = 0; i < ninputs; i++) {
 			fds[n].fd = inputs[i].fd;
@@ -868,7 +949,11 @@ int main(int argc, char **argv)
 			fds[n].fd = ino;
 			fds[n++].events = POLLIN;
 		}
-		poll(fds, n, 250);
+		/* sleep until the next tick is due (rounded up to whole ms) */
+		now = uptime();
+		next = next_fast < next_battery ? next_fast : next_battery;
+		timeout = next > now ? (int)((next - now) * 1000) + 1 : 0;
+		poll(fds, n, timeout);
 		/* inputs first (their slots match the inputs array) */
 		for (i = ninputs - 1; i >= 0; i--) {
 			struct input_event ev[32];
@@ -892,15 +977,22 @@ int main(int argc, char **argv)
 			usleep(100000);		/* let the device node settle */
 			scan_inputs();
 		}
+		/* both ticks keep a fixed rhythm, so the 1 s tick shares a wakeup
+		 * with every second 0.5 s tick; after a long stall they start
+		 * again from now instead of catching up */
 		now = uptime();
 		if (now >= next_fast) {		/* every 0.5 s */
-			next_fast = now + 0.5;
+			next_fast += 0.5;
+			if (next_fast <= now)
+				next_fast = now + 0.5;
 			dc_tick(0);
 			otg_tick(0);
-			tf2_tick(0);
+			cards_tick(0);
 		}
 		if (now >= next_battery) {	/* every second */
-			next_battery = now + 1.0;
+			next_battery += 1.0;
+			if (next_battery <= now)
+				next_battery = now + 1.0;
 			battery_tick(0);
 			critical_tick();
 		}

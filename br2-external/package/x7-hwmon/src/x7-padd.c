@@ -17,6 +17,11 @@
  *
  * Volume and power keys are not forwarded (x7-hwmon handles them). The raw
  * devices are not grabbed, so x7-hwmon still sees every press.
+ *
+ * A source device that goes away (a USB pad unplugged, a driver unbound) is
+ * dropped and the buttons it held are released; the virtual pad stays, since
+ * a running emulator holds it. Only when no source is left does x7-padd
+ * exit, so init starts it again and it looks for devices anew.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -40,22 +45,34 @@ static const unsigned short buttons[] = {
 	BTN_SELECT, BTN_START, BTN_MODE,
 };
 
+#define NBUTTONS	(sizeof(buttons) / sizeof(buttons[0]))
+
 static int src_fd[MAX_SRC], nsrc, ufd = -1;
+static struct pollfd fds[MAX_SRC];	/* fds[i] polls src_fd[i] */
+/* per source: what it holds down, bit n = buttons[n], then bits NBUTTONS..+3
+ * = D-pad up, down, left, right (released if the device goes away) */
+static unsigned int held[MAX_SRC];
 static int dpad_up, dpad_down, dpad_left, dpad_right;
 
 #define LONG_BITS (8 * sizeof(long))
 #define TEST(bits, n) ((bits[(n) / LONG_BITS] >> ((n) % LONG_BITS)) & 1)
 
-static int is_forwarded(unsigned int code)
+/* bit for a forwarded button in held[], or -1 for any other key */
+static int held_bit(unsigned int code)
 {
 	unsigned int i;
 
 	if (code >= BTN_DPAD_UP && code <= BTN_DPAD_RIGHT)
-		return 1;
-	for (i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+		return (int)(NBUTTONS + (code - BTN_DPAD_UP));
+	for (i = 0; i < NBUTTONS; i++)
 		if (buttons[i] == code)
-			return 1;
-	return 0;
+			return (int)i;
+	return -1;
+}
+
+static int is_forwarded(unsigned int code)
+{
+	return held_bit(code) >= 0;
 }
 
 /* open every input device that has at least one of our buttons */
@@ -68,7 +85,7 @@ static void open_sources(void)
 		return;
 	while ((e = readdir(d)) && nsrc < MAX_SRC) {
 		unsigned long keys[(KEY_MAX + LONG_BITS) / LONG_BITS];
-		char path[64], name[96] = "";
+		char path[sizeof("/dev/input/") + sizeof(e->d_name)], name[96] = "";
 		unsigned int c;
 		int fd, useful = 0;
 
@@ -153,10 +170,16 @@ static void emit(unsigned short type, unsigned short code, int value)
 		perror("x7-padd: write");
 }
 
-static void forward(const struct input_event *ev)
+static void forward(int src, const struct input_event *ev)
 {
-	if (ev->type != EV_KEY || ev->value == 2 || !is_forwarded(ev->code))
+	int bit;
+
+	if (ev->type != EV_KEY || ev->value == 2 || (bit = held_bit(ev->code)) < 0)
 		return;
+	if (ev->value)
+		held[src] |= 1u << bit;
+	else
+		held[src] &= ~(1u << bit);
 	switch (ev->code) {
 	case BTN_DPAD_UP:	dpad_up = ev->value;	break;
 	case BTN_DPAD_DOWN:	dpad_down = ev->value;	break;
@@ -172,6 +195,41 @@ static void forward(const struct input_event *ev)
 	emit(EV_SYN, SYN_REPORT, 0);
 }
 
+/* source i went away: close it and release what only it was holding, so no
+ * button or D-pad direction stays stuck in a running game */
+static void drop_source(int i)
+{
+	unsigned int others = 0, gone;
+	int j;
+
+	for (j = 0; j < nsrc; j++)
+		if (j != i)
+			others |= held[j];
+	gone = held[i] & ~others;
+	close(src_fd[i]);
+	for (j = 0; j < (int)NBUTTONS; j++)
+		if (gone & (1u << j))
+			emit(EV_KEY, buttons[j], 0);
+	if (gone & (1u << NBUTTONS))
+		dpad_up = 0;
+	if (gone & (1u << (NBUTTONS + 1)))
+		dpad_down = 0;
+	if (gone & (1u << (NBUTTONS + 2)))
+		dpad_left = 0;
+	if (gone & (1u << (NBUTTONS + 3)))
+		dpad_right = 0;
+	emit(EV_ABS, ABS_HAT0X, dpad_right - dpad_left);
+	emit(EV_ABS, ABS_HAT0Y, dpad_down - dpad_up);
+	emit(EV_SYN, SYN_REPORT, 0);
+	for (j = i; j < nsrc - 1; j++) {
+		src_fd[j] = src_fd[j + 1];
+		fds[j] = fds[j + 1];
+		held[j] = held[j + 1];
+	}
+	nsrc--;
+	fprintf(stderr, "x7-padd: a button device went away (%d left)\n", nsrc);
+}
+
 static void on_term(int sig)
 {
 	(void)sig;
@@ -182,7 +240,6 @@ static void on_term(int sig)
 
 int main(void)
 {
-	struct pollfd fds[MAX_SRC];
 	int i, tries;
 
 	signal(SIGTERM, on_term);
@@ -212,16 +269,27 @@ int main(void)
 			perror("x7-padd: poll");
 			return 1;
 		}
-		for (i = 0; i < nsrc; i++) {
+		/* backwards: dropping source i moves only the ones already done */
+		for (i = nsrc - 1; i >= 0; i--) {
 			struct input_event ev[32];
+			short gone = fds[i].revents & (POLLERR | POLLHUP | POLLNVAL);
 			ssize_t r;
 			int k;
 
-			if (!(fds[i].revents & POLLIN))
+			if (!(fds[i].revents & POLLIN) && !gone)
 				continue;
+			/* a vanished device keeps reporting POLLHUP/POLLERR at once on
+			 * every poll(): take what is still buffered, then drop it */
 			r = read(fds[i].fd, ev, sizeof(ev));
 			for (k = 0; r > 0 && k < r / (ssize_t)sizeof(ev[0]); k++)
-				forward(&ev[k]);
+				forward(i, &ev[k]);
+			if ((r < 0 && errno != EAGAIN && errno != EINTR) || (gone && r <= 0))
+				drop_source(i);
+		}
+		if (!nsrc) {
+			fprintf(stderr, "x7-padd: no button devices left\n");
+			ioctl(ufd, UI_DEV_DESTROY);
+			return 1;
 		}
 	}
 }

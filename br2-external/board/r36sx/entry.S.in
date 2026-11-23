@@ -4,9 +4,9 @@
 # Taken from NZEUS Deck linux-port/kernel-public/entry.S.in (GPL-3.0,
 # https://github.com/nzeuslab/nzeus-deck), which is proven to boot Linux 7.2
 # on this console: it re-enables UART0, prints one line (useful with a UART
-# adapter on the debug pads, 19200 baud), keeps the single Config0 change
-# (bit 17) of the working NZEUS kernel and enters Linux with the firmware
-# arguments untouched.
+# adapter on the debug pads, 19200 baud), sets Config0 bit 17 like the NZEUS
+# kernel's proven boot did (Linux overrides it, see below) and enters Linux
+# with the firmware arguments untouched.
 .set mips32r2
 .set noreorder
 .set noat
@@ -47,7 +47,12 @@ _start:
     la $t1, entry_message
     jal puts_bounded
     nop
-    # Retain the NZEUS kernel's single Config0 change.
+    # Config0 bit 17 is the 74K's Config.MM "SysAD write-merge" bit (MM is
+    # bits 18:17, Linux's MIPS_CONF_MM). It has no lasting effect: on every
+    # boot Linux's mm_config(), run by cpu_probe() at the start of
+    # setup_arch(), rewrites MM to full merging (0b10), so this value only
+    # holds until early setup_arch. It is kept only because NZEUS's proven
+    # boot had it.
     mfc0 $t2, $16, 0
     ehb
     lui $t3, 2

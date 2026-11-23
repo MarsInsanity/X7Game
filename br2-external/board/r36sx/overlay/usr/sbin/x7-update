@@ -20,11 +20,17 @@
 # slot is written: the old system is untouched, the update runs again at the
 # next start. The previous kernel files stay in x7game/previous/ and the
 # previous system in its slot, until the next update.
+#
+# After an install the file is renamed to .installed and every other waiting
+# .x7update to .skipped, so that an older one isn't installed over the new
+# system at the next start. At start-up a file that holds the running system
+# (same version and commit) is not installed again, only renamed.
 BOOT=/boot
 CUBE=$BOOT/cubegm
 PREV=$BOOT/x7game/previous
 LOG=$BOOT/x7game/logs/update.log
 WORK=/tmp/x7update
+PENDING=/run/x7-update.pending
 LAYOUT=2
 
 say() {
@@ -55,7 +61,39 @@ variant_now() {
 
 mf() { sed -n "s/^$1=\([A-Za-z0-9._-]*\)\$/\1/p" "$WORK/manifest" | head -n 1; }
 installed_version() { sed -n 's/^X7_VERSION=//p' /etc/x7game-release; }
+installed_commit() { sed -n 's/^X7_COMMIT=//p' /etc/x7game-release; }
 find_update() { ls -t /share/*.x7update /share/update/*.x7update 2>/dev/null | head -n 1; }
+
+# mark FILE SUFFIX: rename FILE to FILE.SUFFIX, so that it isn't found again
+mark() {
+	mv -f "$1" "$1.$2" && return 0
+	say "could not rename $(basename "$1") (is X7DATA read-only?)"
+	return 1
+}
+
+# skip_others FILE: after FILE was installed, every other waiting update file
+# becomes .skipped. The next start would install it over the new system: the
+# newest file isn't always the newest version, and a second copy of the same
+# one would replace the previous system (the one --rollback goes back to).
+skip_others() {
+	for o in /share/*.x7update /share/update/*.x7update; do
+		test -f "$o" || continue
+		# -ef: FILE itself, also when it was given as a relative path
+		test "$o" -ef "$1" && continue
+		mark "$o" skipped && say "not installing $(basename "$o") as well: renamed to $(basename "$o").skipped"
+	done
+}
+
+# is_running FILE: FILE holds the system that is running now (same version
+# and build commit; a build without a known commit never counts)
+is_running() {
+	rm -rf "$WORK"
+	mkdir -p "$WORK"
+	tar -xOf "$1" x7update/manifest > "$WORK/manifest" 2>/dev/null || return 1
+	commit=$(mf X7U_COMMIT)
+	case "$commit" in ''|unknown) return 1 ;; esac
+	test "$commit" = "$(installed_commit)" && test "$(mf X7U_VERSION)" = "$(installed_version)"
+}
 
 # check FILE: manifest, compatibility, every file's checksum
 check() {
@@ -98,16 +136,24 @@ power_ok() {
 }
 
 # put NAME TARGET: write a boot file next to TARGET, check it, rename over it
+# (a copy that failed is removed again: X7GAME is small)
 put() {
-	tar -xOf "$pkg" "x7update/boot/$1" > "$2.x7new" 2>/dev/null || return 1
-	sync
-	want=$(grep "  boot/$1\$" "$WORK/SHA256SUMS" | cut -d' ' -f1)
-	test "$(sha256sum < "$2.x7new" | cut -d' ' -f1)" = "$want" || return 1
-	mv -f "$2.x7new" "$2"
+	if tar -xOf "$pkg" "x7update/boot/$1" > "$2.x7new" 2>/dev/null; then
+		sync
+		want=$(grep "  boot/$1\$" "$WORK/SHA256SUMS" | cut -d' ' -f1)
+		test "$(sha256sum < "$2.x7new" | cut -d' ' -f1)" = "$want" &&
+			mv -f "$2.x7new" "$2" && return 0
+	fi
+	rm -f "$2.x7new"
+	return 1
 }
 
 install_update() {
 	pkg=$1
+	# an install or a rollback since this start has switched cubegm/ to the
+	# other slot already: installing now would save that kernel in
+	# x7game/previous/ as the running system's
+	test ! -f "$PENDING" || later "an update is waiting for a restart: type reboot first"
 	test -f /run/x7game.conf && . /run/x7game.conf
 	check "$pkg"
 	power_ok || later "the battery is too low for an update: plug in the charger"
@@ -120,6 +166,9 @@ install_update() {
 	test -b "$dev" || die "system slot $new ($dev) is missing"
 	room=$(($(cat "/sys/class/block/${dev#/dev/}/size") * 512))
 	test "$ROOTBYTES" -le "$room" || die "the new system doesn't fit into slot $new"
+
+	# half-written copies from an earlier attempt only take room on X7GAME
+	rm -f "$CUBE"/*.x7new "$PREV"/*.x7new "$BOOT"/x7game/*.x7new
 
 	say "writing the new system into slot $new (running: slot $cur)..."
 	tar -xOf "$pkg" x7update/root/rootfs.squashfs | dd of="$dev" bs=1M conv=fsync 2>/dev/null ||
@@ -135,7 +184,8 @@ install_update() {
 	mkdir -p "$PREV"
 	for f in advapi32.dll vmlinux.uImage ApplicationFrame.dll avp.uImage xgame-logo.bmp; do
 		if test -f "$CUBE/$f"; then
-			cp "$CUBE/$f" "$PREV/$f.x7new" && mv -f "$PREV/$f.x7new" "$PREV/$f"
+			cp "$CUBE/$f" "$PREV/$f.x7new" && mv -f "$PREV/$f.x7new" "$PREV/$f" ||
+				rm -f "$PREV/$f.x7new"
 		fi
 	done
 	cp "$BOOT/x7game/VERSION.txt" "$PREV/VERSION.txt" 2>/dev/null
@@ -151,6 +201,9 @@ install_update() {
 	done
 	put "$kern" "$CUBE/advapi32.dll" && put "$kern" "$CUBE/vmlinux.uImage" ||
 		die "switching the kernel failed: on a PC, copy x7game/previous/* into cubegm/"
+	# cubegm/ now starts slot $new: no further install or rollback until the
+	# restart (/run is RAM, so the mark is gone after it)
+	: > "$PENDING"
 	put README.txt "$BOOT/x7game/README.txt"
 	put VERSION.txt "$BOOT/x7game/VERSION.txt"
 	sync
@@ -158,6 +211,8 @@ install_update() {
 }
 
 rollback() {
+	# an install or a rollback since this start isn't running yet
+	test ! -f "$PENDING" || die "an update is waiting for a restart: type reboot first"
 	mountpoint -q "$BOOT" || die "the boot partition (X7GAME) is not mounted"
 	test -f "$PREV/advapi32.dll" || die "there is no previous system (x7game/previous is empty)"
 	prev=$(sed -n 's/^slot=//p' "$PREV/slot" 2>/dev/null)
@@ -165,11 +220,12 @@ rollback() {
 	for f in ApplicationFrame.dll avp.uImage xgame-logo.bmp advapi32.dll vmlinux.uImage; do
 		if test -f "$PREV/$f"; then
 			cp "$PREV/$f" "$CUBE/$f.x7new" && mv -f "$CUBE/$f.x7new" "$CUBE/$f" ||
-				die "copying $f back failed"
+				{ rm -f "$CUBE/$f.x7new"; die "copying $f back failed"; }
 		fi
 	done
 	cp "$PREV/VERSION.txt" "$BOOT/x7game/VERSION.txt" 2>/dev/null
 	sync
+	: > "$PENDING"			# cubegm/ now starts slot $prev, as after an install
 	say "the previous system (slot $prev, $(sed -n 's/^version=//p' "$PREV/slot")) starts next: type reboot"
 }
 
@@ -196,21 +252,38 @@ case "$1" in
 	p=$(find_update)
 	test -n "$p" || exit 0
 	say "found $(basename "$p") on X7DATA"
+	# the running system itself (a file that couldn't be renamed, or a second
+	# copy): installing it again would only replace the previous system with
+	# the same one - and with X7DATA read-only it would happen at every start
+	if is_running "$p"; then
+		say "$(basename "$p") is already installed (X7 Game $(installed_version), $(installed_commit))"
+		mark "$p" installed
+		sync
+		exit 0
+	fi
 	( install_update "$p" )
 	rc=$?
 	case $rc in
 	0)
-		mv -f "$p" "$p.installed"
+		mark "$p" installed
+		skip_others "$p"
 		sync
 		say "restarting into the new system..."
 		sleep 3
-		reboot
+		# Not a plain reboot: that only signals init, and init waits until
+		# the start-up scripts (this is one of them) have finished, so the
+		# old system would go on starting first. Everything is written;
+		# update.log is on /boot, so nothing can be logged after this.
+		sync
+		umount /share 2>/dev/null
+		umount /boot 2>/dev/null
+		reboot -f
 		sleep 30
 		;;
 	3) say "the update stays on X7DATA and is tried again at the next start" ;;
 	*)
-		mv -f "$p" "$p.rejected"
-		say "renamed to $(basename "$p").rejected (see x7game/logs/update.log)"
+		mark "$p" rejected &&
+			say "renamed to $(basename "$p").rejected (see x7game/logs/update.log)"
 		sleep 5
 		;;
 	esac
@@ -219,7 +292,8 @@ case "$1" in
 	p=${1:-$(find_update)}
 	test -n "$p" || die "no update file found (copy a .x7update file into X7DATA)"
 	( install_update "$p" ) || exit $?
-	case "$p" in /share/*) mv -f "$p" "$p.installed" ;; esac
+	case "$(readlink -f "$p")" in /share/*) mark "$p" installed ;; esac
+	skip_others "$p"
 	sync
 	say "done - type reboot to start the new system"
 	;;

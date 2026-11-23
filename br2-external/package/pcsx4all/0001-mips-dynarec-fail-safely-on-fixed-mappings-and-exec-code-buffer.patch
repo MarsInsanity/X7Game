@@ -1,0 +1,242 @@
+mips dynarec: fail safely on fixed mappings, executable code buffer
+
+X7 Game (R36SX, MIPS 74Kc):
+- PS1 RAM, its mirrors and the block tables are mapped at fixed addresses
+  (0x10000000, 0x20000000). Use MAP_FIXED_NOREPLACE (and check the address)
+  instead of MAP_FIXED, which silently replaces whatever is mapped there,
+  and treat a failed mirror as a failure (the dynarec relies on all four
+  mirrors; before, a failed mirror still reported success). On failure the
+  existing fallback (malloc, slower code) is used.
+- SHMEM_MIRRORING: close the shared memory fd once mapped (it was leaked).
+- The code buffer is a static array in .bss, mapped without PROT_EXEC: ask
+  for PROT_EXEC explicitly, in case the CPU/kernel enforce execute-inhibit.
+diff --git a/src/recompiler/mips/mem_mapping.c b/src/recompiler/mips/mem_mapping.c
+index a9d8c3e..1256112 100644
+--- a/src/recompiler/mips/mem_mapping.c
++++ b/src/recompiler/mips/mem_mapping.c
+@@ -40,6 +40,26 @@
+ #ifdef SHMEM_MIRRORING
+ #include <sys/shm.h>   // For Posix shared mem
+ #endif
++#include <errno.h>
++
++/* Fixed-address mapping that fails instead of silently replacing whatever
++ *  is already mapped there (plain MAP_FIXED would). On failure the callers
++ *  fall back to malloc() and slower code. MAP_FIXED_NOREPLACE: Linux 4.17+;
++ *  an older kernel takes it as a hint, so the address is checked too. */
++#ifndef MAP_FIXED_NOREPLACE
++#define MAP_FIXED_NOREPLACE 0x100000
++#endif
++static void* map_fixed(void* addr, size_t len, int flags, int fd)
++{
++	void* p = mmap(addr, len, PROT_READ|PROT_WRITE,
++			flags|MAP_FIXED_NOREPLACE, fd, 0);
++	if (p != MAP_FAILED && p != addr) {
++		munmap(p, len);
++		errno = EEXIST;
++		p = MAP_FAILED;
++	}
++	return p;
++}
+ 
+ /* Map PSX RAM regions 0x0000_0000..0x007f_ffff and Expansion-ROM/HW-I/O
+  *  regions 0x1f00_0000..0x1f80_ffff to a fixed virtual address region
+@@ -70,7 +90,7 @@ int rec_mmap_psx_mem()
+ 	int   memfd = -1;
+ 	void* mmap_retval = NULL;
+ 	const char* mem_fname = NULL;
+-	uint8_t  l_psxM_mirrored = 0;
++	unsigned l_psxM_maps = 0;     // 2MB regions mapped (RAM + mirrors)
+ 
+ 	// Everything done here with mmap() is with a granularity of 64KB, so
+ 	//  make sure the platform has a page size that will allow this
+@@ -114,8 +134,7 @@ int rec_mmap_psx_mem()
+ 
+ 	// Map PSX RAM to start at fixed virtual address specified in mem_mapping.h
+ 	//  (usually 0x1000_0000)
+-	mmap_retval = mmap((void*)PSX_MEM_VADDR, 0x200000,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
++	mmap_retval = map_fixed((void*)PSX_MEM_VADDR, 0x200000, MAP_SHARED, memfd);
+ 	if (mmap_retval == MAP_FAILED) {
+ 		printf("Error: mmap() to %p of %uMB failed.\n", (void*)(PSX_MEM_VADDR), 0x200000/(1024*1024));
+ 		success = 0;
+@@ -123,27 +142,18 @@ int rec_mmap_psx_mem()
+ 	}
+ 	psxM = (int8_t*)mmap_retval;
+ 	l_psx_mem_mapped = 1;
++	l_psxM_maps = 1;
+ 
+ 	// Create three mirrors of the 2MB RAM, all the way up to 0x7fffff
+-	mmap_retval = mmap((void*)(PSX_MEM_VADDR+0x200000), 0x200000,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 1st mmap() mirror of 2MB PSX RAM failed.\n");
+-		goto exit;
+-	}
+-	mmap_retval = mmap((void*)(PSX_MEM_VADDR+0x400000), 0x200000,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 2nd mmap() mirror of 2MB PSX RAM failed.\n");
+-		goto exit;
+-	}
+-	mmap_retval = mmap((void*)(PSX_MEM_VADDR+0x600000), 0x200000,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 3rd mmap() mirror of 2MB PSX RAM failed.\n");
+-		goto exit;
++	// (the dynarec relies on all of them: a missing one is a failure)
++	for (; l_psxM_maps < 4; l_psxM_maps++) {
++		mmap_retval = map_fixed((void*)(PSX_MEM_VADDR+0x200000*l_psxM_maps), 0x200000, MAP_SHARED, memfd);
++		if (mmap_retval == MAP_FAILED) {
++			printf("Error: creating mmap() mirror %u of 2MB PSX RAM failed.\n", l_psxM_maps);
++			success = 0;
++			goto exit;
++		}
+ 	}
+-	l_psxM_mirrored = 1;
+ 	printf(" ..mapped to %p\n", (void*)psxM);
+ 
+ 	printf("Mapping 8MB Expansion ROM + 64KB PSX HW I/O regions using mmap\n");
+@@ -153,8 +163,7 @@ int rec_mmap_psx_mem()
+ 	// NOTE: For 8MB Expansion region, we expect programs/BIOS to not write
+ 	//       to this region, thereby never actually allocating any pages
+ 	//       of real host RAM (or very few). It should be safe to assume this.
+-	mmap_retval = mmap((void*)(PSX_MEM_VADDR+0x0f000000), 0x0f810000-0x0f000000,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED|MAP_ANONYMOUS, -1, 0);
++	mmap_retval = map_fixed((void*)(PSX_MEM_VADDR+0x0f000000), 0x0f810000-0x0f000000, MAP_SHARED|MAP_ANONYMOUS, -1);
+ 	if (mmap_retval == MAP_FAILED) {
+ 		printf("Error: mmap() to %p of %uKB failed.\n",
+ 				(void*)(PSX_MEM_VADDR+0x0f000000), (0x0f810000-0x0f000000)/1024);
+@@ -176,8 +185,8 @@ exit:
+ 
+ 		// Abandon any mappings that were created
+ 		if (l_psx_mem_mapped) {
+-			// Unmap 2MB PSX RAM and its three mirrors (if mirrors got created)
+-			munmap((void*)PSX_MEM_VADDR, l_psxM_mirrored ? 0x800000 : 0x200000);
++			// Unmap 2MB PSX RAM and the mirrors that got created
++			munmap((void*)PSX_MEM_VADDR, 0x200000*l_psxM_maps);
+ 		}
+ 		psxM = psxP = psxH = NULL;
+ 		psxM_allocated = psxP_allocated = psxH_allocated = 0;
+@@ -185,6 +194,8 @@ exit:
+ 
+ 	// Close/unlink file: RAM is released when munmap()'ed or pid terminates
+ #ifdef SHMEM_MIRRORING
++	if (memfd >= 0)
++		close(memfd);
+ 	if (mem_fname)
+ 		shm_unlink(mem_fname);
+ #else
+@@ -227,7 +238,7 @@ int rec_mmap_rec_mem()
+ 	int   memfd = -1;
+ 	void* mmap_retval = NULL;
+ 	const char* mem_fname = NULL;
+-	uint8_t  l_recRAM_mirrored = 0;
++	unsigned l_recRAM_maps = 0;   // recRAM regions mapped (recRAM + mirrors)
+ 
+ 	// Everything done here with mmap() is with a granularity of 512KB, so
+ 	//  make sure the platform has a page size that will allow this
+@@ -272,35 +283,24 @@ int rec_mmap_rec_mem()
+ 
+ 	// Map recRAM to start at fixed virtual address specified in mem_mapping.h
+ 	//  (usually 0x2000_0000)
+-	mmap_retval = mmap((void*)REC_RAM_VADDR, REC_RAM_SIZE,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
++	mmap_retval = map_fixed((void*)REC_RAM_VADDR, REC_RAM_SIZE, MAP_SHARED, memfd);
+ 	if (mmap_retval == MAP_FAILED) {
+ 		printf("Error: mmap() to %p of %uMB failed.\n", (void*)(REC_RAM_VADDR), REC_RAM_SIZE/(1024*1024));
+ 		success = 0;
+ 		goto exit;
+ 	}
+ 	l_rec_mem_mapped = 1;
++	l_recRAM_maps = 1;
+ 
+ 	// Create three mirrors of the recRAM, to reflect PS1's RAM mirroring
+-	mmap_retval = mmap((void*)(REC_RAM_VADDR+(REC_RAM_SIZE*1)), REC_RAM_SIZE,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 1st mmap() mirror of recRAM failed.\n");
+-		goto exit;
+-	}
+-	mmap_retval = mmap((void*)(REC_RAM_VADDR+(REC_RAM_SIZE*2)), REC_RAM_SIZE,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 2nd mmap() mirror of recRAM failed.\n");
+-		goto exit;
+-	}
+-	mmap_retval = mmap((void*)(REC_RAM_VADDR+(REC_RAM_SIZE*3)), REC_RAM_SIZE,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED, memfd, 0);
+-	if (mmap_retval == MAP_FAILED) {
+-		printf("Error: creating 3rd mmap() mirror of recRAM failed.\n");
+-		goto exit;
++	for (; l_recRAM_maps < 4; l_recRAM_maps++) {
++		mmap_retval = map_fixed((void*)(REC_RAM_VADDR+(REC_RAM_SIZE*l_recRAM_maps)), REC_RAM_SIZE, MAP_SHARED, memfd);
++		if (mmap_retval == MAP_FAILED) {
++			printf("Error: creating mmap() mirror %u of recRAM failed.\n", l_recRAM_maps);
++			success = 0;
++			goto exit;
++		}
+ 	}
+-	l_recRAM_mirrored = 1;
+ 	printf(" ..mapped to %p\n", (void*)REC_RAM_VADDR);
+ 
+ 	printf("Mapping %uKB recROM using mmap\n", REC_ROM_SIZE/1024);
+@@ -311,8 +311,7 @@ int rec_mmap_rec_mem()
+ 	//  allows future 64-bit platforms to use the same virtual mappings
+ 	//  while using a larger offset multiplier that 8-byte pointers require,
+ 	//  i.e. 0x2000_0000 + (0x00c0_0000 * 2).
+-	mmap_retval = mmap((void*)REC_ROM_VADDR, REC_ROM_SIZE,
+-			PROT_READ|PROT_WRITE, MAP_SHARED|MAP_FIXED|MAP_ANONYMOUS, -1, 0);
++	mmap_retval = map_fixed((void*)REC_ROM_VADDR, REC_ROM_SIZE, MAP_SHARED|MAP_ANONYMOUS, -1);
+ 	if (mmap_retval == MAP_FAILED) {
+ 		printf("Error: mmap() to %p of %uKB failed.\n",
+ 				(void*)REC_ROM_VADDR, REC_ROM_SIZE/1024);
+@@ -330,13 +329,15 @@ exit:
+ 
+ 		// Abandon any mappings that were created
+ 		if (l_rec_mem_mapped) {
+-			// Unmap 2MB recRAM and its three mirrors (if mirrors got created)
+-			munmap((void*)REC_RAM_VADDR, l_recRAM_mirrored ? REC_RAM_SIZE*4 : REC_RAM_SIZE);
++			// Unmap recRAM and the mirrors that got created
++			munmap((void*)REC_RAM_VADDR, REC_RAM_SIZE*l_recRAM_maps);
+ 		}
+ 	}
+ 
+ 	// Close/unlink file: RAM is released when munmap()'ed or pid terminates
+ #ifdef SHMEM_MIRRORING
++	if (memfd >= 0)
++		close(memfd);
+ 	if (mem_fname)
+ 		shm_unlink(mem_fname);
+ #else
+diff --git a/src/recompiler/mips/recompiler.c b/src/recompiler/mips/recompiler.c
+index 2a1e480..e2c6e64 100644
+--- a/src/recompiler/mips/recompiler.c
++++ b/src/recompiler/mips/recompiler.c
+@@ -26,6 +26,8 @@
+  */
+ 
+ #include <stddef.h>
++#include <unistd.h>
++#include <sys/mman.h>
+ #include "plugin_lib.h"
+ #include "psxcommon.h"
+ #include "psxhle.h"
+@@ -533,6 +535,17 @@ static int recInit()
+ 		memset(recMemBase, 0xff, fill_size);
+ 	}
+ 
++	// The code buffer lives in .bss, which the kernel maps without execute
++	//  permission: that only matters on CPUs with execute-inhibit (MIPS
++	//  RIXI), but then every block would fault. Ask for it explicitly.
++	{
++		uintptr_t pg = (uintptr_t)sysconf(_SC_PAGESIZE);
++		uintptr_t start = (uintptr_t)recMemBase & ~(pg - 1);
++		uintptr_t end = ((uintptr_t)recMemBase + RECMEM_SIZE + pg - 1) & ~(pg - 1);
++		if (mprotect((void*)start, end - start, PROT_READ|PROT_WRITE|PROT_EXEC) < 0)
++			perror("mipsrec: mprotect(PROT_EXEC) of the code buffer");
++	}
++
+ 	// The tables recRAM and recROM hold block code pointers for all valid PC
+ 	//  values for a PS1 program, after masking away banking and/or mirroring.
+ 	//  Originally, the dynarec used a LUT, psxRecLUT[], to accomplish this

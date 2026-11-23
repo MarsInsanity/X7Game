@@ -6,6 +6,7 @@ config BR2_PACKAGE_RETROARCH
 	select BR2_PACKAGE_ALSA_LIB
 	select BR2_PACKAGE_ALSA_LIB_PCM
 	select BR2_PACKAGE_ALSA_LIB_MIXER
+	select BR2_PACKAGE_ALSA_LIB_SEQ # midi/drivers/alsa_midi.c
 	select BR2_PACKAGE_LIBUDEV_ZERO
 	help
 	  RetroArch, the libretro frontend, in a slim build for the

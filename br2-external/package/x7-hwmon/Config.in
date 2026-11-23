@@ -1,7 +1,33 @@
 config BR2_PACKAGE_X7_HWMON
 	bool "x7-hwmon"
+	depends on BR2_USE_MMU # fork, alsa-utils
+	depends on BR2_TOOLCHAIN_HAS_THREADS # alsa-utils
+	select BR2_PACKAGE_ALSA_UTILS # amixer: volume keys
+	select BR2_PACKAGE_ALSA_UTILS_AMIXER
 	help
-	  X7 Game hardware monitor: prints every button press, the
-	  headphone jack, the DC (charger) and OTG ports, the battery
-	  percentage and TF2 cards on the console. Also x7-tf2-probe,
-	  a read-only tool to find TF2's card-detect wiring.
+	  X7 Game's system daemons and tools:
+
+	  x7-hwmon: the hardware monitor daemon (started by init). It
+	  turns the console off with the power button or when the
+	  battery runs low, handles the volume keys, and reports the
+	  battery, charger, headphone jack and OTG port in the event
+	  log /run/x7-events.log. "x7-hwmon --status" prints the
+	  hardware state (x7-status, x7-console and the game list's
+	  System information page use it).
+
+	  x7-padd: the virtual gamepad "X7 Game Gamepad" that the
+	  emulators read (started by init).
+
+	  x7-browser: the temporary text-mode game list on the screen
+	  (started by init).
+
+	  x7-datapart: writes the data partition's (X7DATA) entry in
+	  the SD card's partition table at the first start
+	  (S05x7data).
+
+	  x7-tf2-probe: a read-only research tool to find TF2's
+	  card-detect wiring.
+
+comment "x7-hwmon needs a toolchain w/ threads"
+	depends on BR2_USE_MMU
+	depends on !BR2_TOOLCHAIN_HAS_THREADS

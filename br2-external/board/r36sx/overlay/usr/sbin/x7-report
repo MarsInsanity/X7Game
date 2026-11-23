@@ -2,6 +2,11 @@
 # X7 Game: print a diagnostic report (used for x7game/logs/boot.log and
 # last-session.log on the SD card, and handy over the USB shell).
 #   x7-report [boot|session]
+# The session report is written at power-off after the data partition has
+# been unmounted (rcK stops S05x7data before S00x7boot), so its data
+# partition and update lines show X7DATA as gone.
+note=
+test "$1" = session && note=" (power-off: X7DATA is already unmounted)"
 echo "== X7 Game $1 report =="
 cat /etc/x7game-release 2>/dev/null
 uname -a
@@ -13,21 +18,40 @@ for f in /sys/kernel/config/usb_gadget/x7game2/UDC /sys/class/udc/*/state /run/x
 done
 ls -l /dev/ttyGS0 2>&1
 echo
-echo "== data partition =="
+echo "== data partition$note =="
 cat /run/x7-data.state 2>/dev/null
 /usr/sbin/x7-datapart probe /dev/mmcblk0 2097152 2>&1
 grep " /share \| /boot " /proc/mounts
 df -h /share /boot 2>/dev/null
 echo
-echo "== system slots / updates =="
+echo "== system slots / updates$note =="
 /usr/sbin/x7-update --status 2>&1
 echo
 echo "== processes =="
 ps
+echo
+echo "== virtual gamepad (x7-padd) =="
+# at boot this runs while init is still starting x7-padd: give it a moment
+if test "$1" = boot; then
+	for i in 1 2 3 4 5; do
+		grep -lq 'X7 Game Gamepad' /sys/class/input/*/name 2>/dev/null && break
+		sleep 1
+	done
+fi
+grep -l 'X7 Game Gamepad' /sys/class/input/*/name 2>/dev/null ||
+	echo "no \"X7 Game Gamepad\" input device"
+tail -n 40 /run/x7-padd.log 2>/dev/null
+echo
+# Read-only: which SoC clocks are running (clk_ignore_unused leaves on
+# whatever the bootloader enabled). Never write these registers.
+echo "== clock gates (bit set = clock off) =="
+echo "GATE0 0x18800060: $(devmem 0x18800060 32 2>/dev/null)"
+echo "GATE1 0x18800064: $(devmem 0x18800064 32 2>/dev/null)"
 if test "$1" = session; then
 	echo
-	echo "== console events =="
-	cat /run/x7-events.log 2>/dev/null
+	echo "== console events (last 500 lines) =="
+	# older lines first, from x7-events.log.1 if the log was ever rotated
+	cat /run/x7-events.log.1 /run/x7-events.log 2>/dev/null | tail -n 500
 	echo
 	echo "== system log (last 200 lines) =="
 	tail -n 200 /var/log/messages 2>/dev/null

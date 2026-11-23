@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sun, 22 Nov 2026 14:30:00 -0800
+Subject: [PATCH] MIPS: hichip: check that the nzclk CPU clock limit applied
+ (X7 Game)
+
+X7 Game boots with nzclk=900 because the FPU corrupts stores at the
+factory 1188 MHz. The hook that applies it only logged the outcome at
+KERN_INFO, which loglevel=5 hides, and never compared the rate read back
+with the request. If the switch fails (clk_set_rate() error, or a read-back
+that differs), print a KERN_EMERG line, which reaches the screen, and set
+TAINT_CPU_OUT_OF_SPEC (bit 2 of /proc/sys/kernel/tainted) so user space
+can check for it. Nothing changes when the switch works.
+
+A bare "nzclk" or "nzc7" token (no '=') reached the handlers as NULL and
+was passed to kstrtouint(), a NULL dereference long before any console
+exists. Both handlers now return -EINVAL for a missing or unparsable
+value, so do_early_param() prints "Malformed early option" instead.
+
+The header comment promised "Raising the clock is refused", which the
+code never did: it only accepts the four listed rates, all below
+1188 MHz. Say that instead.
+---
+ arch/mips/generic/nzeus-fpudiag.c | 36 +++++++++++++++++++++++++++----
+ 1 file changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/arch/mips/generic/nzeus-fpudiag.c b/arch/mips/generic/nzeus-fpudiag.c
+index e27cbe32c..35cc8b4e8 100644
+--- a/arch/mips/generic/nzeus-fpudiag.c
++++ b/arch/mips/generic/nzeus-fpudiag.c
+@@ -12,7 +12,13 @@
+  *                Applied in plat_time_init() BEFORE the CP0 timer rate is
+  *                read, through the existing hc16xx clock driver (the same
+  *                MCPU select field the stock HiChip 4.4 kernel writes in
+- *                hc16xx_set_cpu_clk). Raising the clock is refused.
++ *                hc16xx_set_cpu_clk). Only these four rates, all below the
++ *                factory 1188 MHz, are accepted; the rate is set whatever
++ *                the CPU ran at before. X7 Game always asks for 900 MHz
++ *                (the FPU corrupts stores at 1188 MHz): if the rate read
++ *                back is not the one asked for, a KERN_EMERG line is
++ *                printed and the kernel is tainted (TAINT_CPU_OUT_OF_SPEC,
++ *                bit 2 of /proc/sys/kernel/tainted).
+  *   nzc7=<hex>   OR documented Config7 pipeline-control bits into Config7:
+  *                CP1IO (6), SG (22), IALU (24), IAGN (25) only. Any other
+  *                bit makes the whole value be ignored.
+@@ -21,6 +27,7 @@
+ #include <linux/init.h>
+ #include <linux/io.h>
+ #include <linux/kernel.h>
++#include <linux/panic.h>
+ #include <linux/printk.h>
+ 
+ #include <asm/addrspace.h>
+@@ -45,8 +52,14 @@ static int __init nz_clk_param(char *s)
+ {
+ 	unsigned int mhz;
+ 
++	/*
++	 * A bare "nzclk" (no '=') arrives as NULL. A non-zero return makes
++	 * do_early_param() print "Malformed early option".
++	 */
++	if (!s)
++		return -EINVAL;
+ 	if (kstrtouint(s, 10, &mhz))
+-		return 0;
++		return -EINVAL;
+ 	/* Only rates that exist in the clock table AND are below 1188 MHz. */
+ 	if (mhz == 297 || mhz == 396 || mhz == 594 || mhz == 900)
+ 		nz_clk_mhz = mhz;
+@@ -60,8 +73,10 @@ static int __init nz_c7_param(char *s)
+ {
+ 	unsigned int mask;
+ 
++	if (!s)
++		return -EINVAL;
+ 	if (kstrtouint(s, 16, &mask))
+-		return 0;
++		return -EINVAL;
+ 	if (mask & ~NZ_C7_ALLOWED)
+ 		pr_warn("NZEUS_FPUDIAG nzc7=%#x refused (allowed bits %#x)\n",
+ 			mask, NZ_C7_ALLOWED);
+@@ -112,9 +127,22 @@ void __init nzeus_fpudiag_early(struct clk *cpu_clk)
+ 	if (nz_clk_mhz && cpu_clk) {
+ 		unsigned long before = clk_get_rate(cpu_clk);
+ 		int ret = clk_set_rate(cpu_clk, nz_clk_mhz * 1000000UL);
++		unsigned long after = clk_get_rate(cpu_clk);
+ 
+ 		pr_info("NZEUS_FPUDIAG nzclk: %lu -> %lu Hz (request %u MHz, ret %d)\n",
+-			before, clk_get_rate(cpu_clk), nz_clk_mhz, ret);
++			before, after, nz_clk_mhz, ret);
++
++		/*
++		 * X7 Game depends on this limit (see the top of this file). The
++		 * line above is KERN_INFO and hidden by loglevel=5, so a failed
++		 * switch is reported at KERN_EMERG, which reaches the screen, and
++		 * taints the kernel so user space can check for it.
++		 */
++		if (ret || after != nz_clk_mhz * 1000000UL) {
++			pr_emerg("X7: CPU clock limit %u MHz NOT applied (ret %d, now %lu Hz): FPU stores unreliable\n",
++				 nz_clk_mhz, ret, after);
++			add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
++		}
+ 	}
+ 
+ 	if (nz_c7_mask) {

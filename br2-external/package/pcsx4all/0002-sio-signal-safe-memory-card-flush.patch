@@ -1,0 +1,91 @@
+sio: signal-safe memory card flush
+
+Add sioEmergencyFlushMcds(): writes the memory cards that have changes not
+yet flushed (their file is still open for writing) straight from memory,
+with open/write/fsync/close only, for signal handlers (power-off when the
+main loop does not exit in time, crashes). The normal path stays
+sioSyncMcds().
+
+Add sioMcdBusy(): true while a memory card has writes not yet flushed (a
+save in progress), so the port can let a save finish before quitting.
+diff --git a/src/sio.c b/src/sio.c
+index c469c15..174edd5 100644
+--- a/src/sio.c
++++ b/src/sio.c
+@@ -27,6 +27,8 @@
+ #include "misc.h"
+ #include <sys/stat.h>
+ #include <unistd.h>
++#include <fcntl.h>
++#include <errno.h>
+ 
+ // Status Flags
+ #define TX_RDY		0x0001
+@@ -448,6 +450,51 @@ void sioSyncMcds()
+ #endif
+ }
+ 
++// Last resort for signal handlers (power-off with a stuck main loop, crash):
++//  writes every memcard with changes not yet flushed (its file is still open
++//  for writing, see SaveMcd()) in one go from the in-memory copy, using only
++//  async-signal-safe system calls. The stdio buffer of the open FILE is
++//  simply abandoned: the whole card is rewritten here.
++void sioEmergencyFlushMcds(void)
++{
++	int saved_errno = errno;
++	int i;
++
++	for (i = 0; i < 2; i++) {
++		struct Memcard *m = &memcards[i];
++		const char *p = m->data;
++		size_t left = MCD_SIZE;
++		int fd;
++
++		if (m->file == NULL || m->filename == NULL || m->filename[0] == '\0')
++			continue;
++		fd = open(m->filename, O_WRONLY);
++		if (fd < 0)
++			continue;
++		while (left > 0) {
++			ssize_t n = write(fd, p, left);
++			if (n < 0) {
++				if (errno == EINTR)
++					continue;
++				break;
++			}
++			p += n;
++			left -= (size_t)n;
++		}
++		fsync(fd);
++		close(fd);
++	}
++	errno = saved_errno;
++}
++
++// True while a memcard has writes not yet flushed: a save is being written
++//  (SaveMcd() keeps the file open; the PSXINT_SIO_SYNC_MCD event flushes and
++//  closes it MEMCARD_SYNC_DELAY cycles after the last write).
++uint_fast8_t sioMcdBusy(void)
++{
++	return memcards[MCD1].file != NULL || memcards[MCD2].file != NULL;
++}
++
+ // If 'src' pointer is non-NULL, memcard data array will be updated
+ //  with data at offset 'adr' starting from source 'src' of size 'size',
+ //  then, memcard file will be written with this new data. If the data
+diff --git a/src/sio.h b/src/sio.h
+index 7ccb80c..c65937c 100644
+--- a/src/sio.h
++++ b/src/sio.h
+@@ -68,6 +68,11 @@ enum MemcardNum {
+  * (Emulator code should use these when possible/appropriate)
+  */
+ void sioSyncMcds(void);
++/* Signal-safe last resort (power-off, crash): writes the memcards that have
++ * unsaved changes straight from memory, with system calls only. */
++void sioEmergencyFlushMcds(void);
++/* True while a memcard has writes not yet flushed (a save in progress). */
++uint_fast8_t sioMcdBusy(void);
+ int sioMcdWrite(enum MemcardNum mcd_num, const char *src, uint32_t adr, int size);
+ int sioMcdRead(enum MemcardNum mcd_num, char *dst, uint32_t adr, int size);
+ char* sioMcdDataPtr(enum MemcardNum mcd_num);

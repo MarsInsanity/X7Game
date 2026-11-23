@@ -18,10 +18,10 @@
 ################################################################################
 
 # GCC 14 turned several old-C warnings into errors that older cores trip on
-X7_LIBRETRO_CC_FLAGS = -mtune=74kc -fcommon \
+X7_LIBRETRO_CC_FLAGS = -mtune=74kf2_1 -fcommon \
 	-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types \
 	-Wno-error=int-conversion -Wno-error=implicit-int -Wno-error=return-mismatch
-X7_LIBRETRO_CXX_FLAGS = -mtune=74kc
+X7_LIBRETRO_CXX_FLAGS = -mtune=74kf2_1
 
 # $(1) = directory to run make in, $(2) = makefile, $(3) = extra make arguments
 X7_LIBRETRO_MAKE = $(TARGET_MAKE_ENV) $(MAKE) -C $(1) -f $(2) platform=unix \

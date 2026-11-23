@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Sun, 22 Nov 2026 14:30:00 -0800
+Subject: [PATCH] fbdev: hc16xx-gma: 16 bpp palette, activate flags and probe
+ fixes (X7 Game)
+
+Build the console pseudo-palette from the current bitfields, so it is RGB565 at 16 bpp instead of ARGB8888 values that the blitter drew striped and in wrong colours (at every emulator start and after an emulator crash left the screen at 16 bpp). At 32 bpp the entries stay exactly as before (0xffRRGGBB).
+
+hc_check_var keeps the caller's activate flags, so FB_ACTIVATE_TEST requests no longer switch the pixel format.
+
+Do not start the 200 ms AVP-blank watchdog when the screen is taken over at probe (x7,activate-at-probe): X7 Game boots an AVP stand-in, so the blank it repairs cannot happen and the timer only woke the CPU.
+
+If register_framebuffer() fails after the take-over, keep the descriptor, pixels and fb_info: the GMA is still scanning them and fbcon may already have published the fb.
+
+Drop the probe-time clear of the 1.2 MB uncached pixel buffer: dma_alloc_coherent() already returns zeroed memory.
+---
+ drivers/video/fbdev/hc16xx-gma-fb.c | 53 ++++++++++++++++++++++++++---
+ 1 file changed, 48 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/video/fbdev/hc16xx-gma-fb.c b/drivers/video/fbdev/hc16xx-gma-fb.c
+index 5e4212033..a59b2b6f7 100644
+--- a/drivers/video/fbdev/hc16xx-gma-fb.c
++++ b/drivers/video/fbdev/hc16xx-gma-fb.c
+@@ -9,6 +9,8 @@
+  * mode bit 0 set, or the descriptor replaced). It then asks the AVP to re-apply
+  * its own display mode (which restores correct colours) and re-enables our
+  * layer. Without that option the driver behaves exactly as before.
++ * X7 Game (x7,activate-at-probe) boots a stand-in instead of the AVP firmware,
++ * so that blank cannot happen there and the watchdog is never started.
+  *
+  * Two pixel formats (2026-10-12): ARGB8888 (32 bits, the default, as before)
+  * and RGB565 (16 bits) - HiChip's GMA format 6 (hcfb.c HCFB_FMT_RGB565,
+@@ -62,7 +64,7 @@ struct hc_gma {
+ 	u32 palette[16];
+ 	u32 saved_ctl, saved_dmba, saved_alpha, saved_mask;
+ 	bool active;
+-	struct delayed_work watch;	/* AVP blank recovery, only while active */
++	struct delayed_work watch;	/* AVP blank recovery, while active, not with keep_active */
+ 	unsigned int recoveries, failures;
+ 	unsigned int bpp;		/* 32 (ARGB8888, default) or 16 (RGB565) */
+ 	bool keep_active;		/* X7 Game: own the screen from probe, ignore blanking */
+@@ -156,6 +158,8 @@ static int hc_enable_ours(struct hc_gma *g)
+  * The factory AVP blanks the output about every 2 minutes when no stock
+  * system answers it (GMA0 off, output mode bit 0 set). Re-applying the AVP's
+  * own display mode restores correct colours; then we re-enable our layer.
++ * Not used with keep_active (X7 Game): its AVP stand-in never blanks, and the
++ * 200 ms timer would only wake the CPU.
+  */
+ static void hc_watch(struct work_struct *work)
+ {
+@@ -246,7 +250,9 @@ static int hc_blank(int blank, struct fb_info *info)
+ 	} else {
+ 		g->active = true;
+ 		dev_info(g->dev, "GMA enabled; screen output still requires visual verification\n");
+-		if (IS_ENABLED(CONFIG_NZEUS_AVP_RPC)) {
++		/* X7 Game (keep_active) runs no factory AVP firmware, so the
++		 * blank the watchdog repairs cannot happen. */
++		if (IS_ENABLED(CONFIG_NZEUS_AVP_RPC) && !g->keep_active) {
+ 			g->failures = 0;
+ 			schedule_delayed_work(&g->watch, msecs_to_jiffies(WATCH_MS));
+ 		}
+@@ -259,14 +265,35 @@ out:
+ 	return ret;
+ }
+ 
++/* One 16-bit colour channel scaled into a field of the current pixel format. */
++static u32 hc_chan_to_field(unsigned int chan, const struct fb_bitfield *bf)
++{
++	if (!bf->length)
++		return 0;
++	chan &= 0xffff;
++	chan >>= 16 - bf->length;
++	return chan << bf->offset;
++}
++
++/*
++ * The console draws pseudo-palette entries as raw pixels, so they must match
++ * the current format: RGB565 at 16 bits, 0xAARRGGBB at 32 bits. fb_set_var()
++ * reloads the colour map after every format switch. At 32 bits the alpha byte
++ * comes out 0xff (fb_set_cmap passes transp 0xffff when the map has none),
++ * which the GMA needs: it draws ARGB8888 with per-pixel alpha.
++ */
+ static int hc_setcolreg(unsigned int reg, unsigned int red, unsigned int green,
+ 			unsigned int blue, unsigned int transp, struct fb_info *info)
+ {
+ 	struct hc_gma *g = info->par;
++	const struct fb_var_screeninfo *v = &info->var;
++
+ 	if (reg >= ARRAY_SIZE(g->palette))
+ 		return -EINVAL;
+-	g->palette[reg] = ((transp >> 8) << 24) | ((red >> 8) << 16) |
+-			  ((green >> 8) << 8) | (blue >> 8);
++	g->palette[reg] = hc_chan_to_field(red, &v->red) |
++			  hc_chan_to_field(green, &v->green) |
++			  hc_chan_to_field(blue, &v->blue) |
++			  hc_chan_to_field(transp, &v->transp);
+ 	return 0;
+ }
+ 
+@@ -279,9 +306,13 @@ static int hc_check_var(struct fb_var_screeninfo *v, struct fb_info *info)
+ 		return -EINVAL;
+ 	{
+ 		unsigned int bpp = v->bits_per_pixel;
++		/* fb_set_var() reads activate after this check: keep the
++		 * caller's, so FB_ACTIVATE_TEST stays a test */
++		u32 activate = v->activate;
+ 
+ 		*v = info->var;		/* everything else stays fixed */
+ 		hc_fill_var(v, bpp);
++		v->activate = activate;
+ 	}
+ 	return 0;
+ }
+@@ -372,7 +403,7 @@ static int hc_probe(struct platform_device *pdev)
+ 		ret = -EINVAL;
+ 		goto fail_dma;
+ 	}
+-	memset(g->pixels, 0, PIXEL_BYTES);
++	/* No clear needed: dma_alloc_coherent() zeroes; keep_active fills opaque black. */
+ 	g->bpp = 32;				/* ARGB8888 until a program asks for 16 */
+ 	hc_header(g);
+ 	info->fix = (struct fb_fix_screeninfo) {
+@@ -415,6 +446,18 @@ static int hc_probe(struct platform_device *pdev)
+ 	}
+ 	ret = register_framebuffer(info);
+ 	if (ret) {
++		/*
++		 * After the take-over the GMA is scanning our descriptor and
++		 * pixels, and fbcon may already have published info: freeing
++		 * them would leave the hardware and fbcon on freed memory.
++		 * Keep everything (and the register mapping) instead.
++		 */
++		if (g->active) {
++			cancel_delayed_work_sync(&g->watch);
++			dev_err(g->dev, "register_framebuffer failed (%d) after the take-over; keeping the scanout buffers\n",
++				ret);
++			return 0;
++		}
+ 		fb_dealloc_cmap(&info->cmap);
+ 		goto fail_dma;
+ 	}
