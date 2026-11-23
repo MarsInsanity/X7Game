@@ -70,6 +70,24 @@ What X7 Game relies on, and where each fact comes from. "NZEUS" = NZEUS Deck
   `panel-init-sequence` (V2.6 and V2.7 differ). The kernel framebuffer points
   the GMA0 layer at its own ARGB8888 or RGB565 buffer (NZEUS
   `display/hc16xx-gma-fb.c`).
+- The layer is described by a 640-byte descriptor in memory (GMA_DMBA
+  0x1883a304 points at it); layout from HiChip's hcRTOS SDK (`hcfb.h`,
+  `gma_header_t`, public copy in github.com/bnister/sf2000_hcrtos):
+  dword0 flags (bit 2 scale on, bit 3 edge preserve, bits 7:4 format),
+  dword2/3 the window on the screen (start | inclusive end << 16), dword4 the
+  source size, dword5 alpha and pitch (bits 29:16), dword7 the pixel
+  address, dword8 bit 0 scale mode (0 filter, 1 duplicate), dword9 the scale
+  steps (4.12 fixed point, 4096 x source / output, horizontal low half),
+  dwords 16-143 the polyphase filter table (4/3 taps, 16 phases).
+  Registers: 0x300 control, 0x304 descriptor address, 0x308 alpha, 0x350 bit 0
+  holds updates until released (they take effect at the next frame).
+- Hardware upscaling of that layer (kernel patch 0019,
+  `/sys/bus/platform/devices/1883a000.framebuffer/scale`) uses HiChip's
+  upscale filter table, the one the sf3k-hacking project ran on an SF3000
+  (github.com/SiarheiVolkau/sf3k-hacking). Not yet confirmed on the R36SX.
+- The CPU writes the buffer uncached; the 74K's "uncached accelerated"
+  attribute (write gathering) can be switched on for programs' mappings
+  (patch 0018), also not yet confirmed on this SoC's bus.
 
 ## Sound
 

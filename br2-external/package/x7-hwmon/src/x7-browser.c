@@ -587,8 +587,18 @@ static void screen_setup(void)
 static void console_depth(void)
 {
 	struct fb_var_screeninfo v;
-	int fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
+	int fd;
 
+	/* an emulator that crashed may have left the display's hardware
+	 * scaling on (kernel patch 0019): the text needs it off */
+	fd = open("/sys/bus/platform/devices/1883a000.framebuffer/scale", O_WRONLY | O_CLOEXEC);
+	if (fd >= 0) {
+		ssize_t r = write(fd, "off", 3);
+
+		(void)r;	/* an old kernel without it: nothing to undo */
+		close(fd);
+	}
+	fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		return;
 	if (ioctl(fd, FBIOGET_VSCREENINFO, &v) == 0 && v.bits_per_pixel != CONSOLE_BPP) {

@@ -194,10 +194,10 @@ index 0000000..603eea8
 +.PHONY: all clean
 diff --git a/gfx/drivers/x7fb_gfx.c b/gfx/drivers/x7fb_gfx.c
 new file mode 100644
-index 0000000..e706fb2
+index 0000000..7fe19de
 --- /dev/null
 +++ b/gfx/drivers/x7fb_gfx.c
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,874 @@
 +/*  RetroArch - A frontend for libretro.
 + *  Copyright (C) 2026 - X7 Game
 + *
@@ -222,6 +222,7 @@ index 0000000..e706fb2
 + *  If not, see <http://www.gnu.org/licenses/>.
 + */
 +
++#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
 +#include <fcntl.h>
@@ -259,6 +260,11 @@ index 0000000..e706fb2
 +#define X7FB_MAX_H      480
 +#define X7FB_NUM_GLYPHS 256
 +#define X7FB_FONT_SCALE 2
++/* X7 Game's GMA hardware upscaling (kernel patch 0019), used only when the
++ * system turned it on (x7game.cfg fb_hwscale=1 makes S32x7display create
++ * X7FB_HWSCALE_ON) */
++#define X7FB_SCALE_ATTR "/sys/bus/platform/devices/1883a000.framebuffer/scale"
++#define X7FB_HWSCALE_ON "/run/x7-hwscale"
 +
 +typedef struct x7fb_video
 +{
@@ -278,6 +284,13 @@ index 0000000..e706fb2
 +   bool rgb32;                       /* core frames are XRGB8888 */
 +   bool scale_integer;
 +   bool keep_aspect;
++   bool smooth;                      /* video_smooth: the GMA's filter, else duplicate */
++   /* hardware upscaling: the frame goes 1:1 to the top-left of the buffer
++    * and the GMA stretches it into the output rectangle */
++   int scale_fd;                     /* X7FB_SCALE_ATTR, -1 = not used */
++   bool hw;                          /* the current output is scaled by the GMA */
++   unsigned hw_w, hw_h;              /* the source size given to the GMA (even) */
++   char scale_now[48];               /* the last line written to scale_fd */
 +   bool menu_active;
 +   bool was_in_menu;
 +   bool need_clear;                  /* clear the borders before the next blit */
@@ -326,6 +339,24 @@ index 0000000..e706fb2
 +      for (i = 0; i < words; i++)
 +         dst[i] = 0;
 +   }
++}
++
++/* Tell the GMA how to scale ("W H OW OH smooth|sharp", or "off"). A failed
++ * write gives up hardware scaling for the rest of the session. */
++static void x7fb_scale_write(x7fb_video_t *vid, const char *line)
++{
++   if (vid->scale_fd < 0 || string_is_equal(line, vid->scale_now))
++      return;
++   if (pwrite(vid->scale_fd, line, strlen(line), 0) < 0)
++   {
++      RARCH_WARN("[x7fb] Hardware scaling refused (%s): scaling on the CPU.\n", line);
++      close(vid->scale_fd);
++      vid->scale_fd     = -1;
++      vid->hw           = false;
++      vid->scale_now[0] = '\0';
++      return;
++   }
++   strlcpy(vid->scale_now, line, sizeof(vid->scale_now));
 +}
 +
 +/* Work out where (and how big) a src_w x src_h image goes on the screen */
@@ -401,6 +432,33 @@ index 0000000..e706fb2
 +      vid->ymap[i] = (uint16_t)((i * src_h) / out_h);
 +
 +   vid->need_clear = true;
++
++   /* Hardware upscaling when the GMA can do this size: even sizes, at
++    * least 16 pixels, upscaling only (an odd last column or row is left
++    * out). The kernel centres the window like this function does. */
++   vid->hw = false;
++   if (vid->scale_fd >= 0)
++   {
++      unsigned hw_w = src_w & ~1u, hw_h = src_h & ~1u;
++      unsigned ow   = out_w & ~1u, oh   = out_h & ~1u;
++
++      if (hw_w >= 16 && hw_h >= 16 && hw_w <= ow && hw_h <= oh)
++      {
++         char line[48];
++
++         snprintf(line, sizeof(line), "%u %u %u %u %s", hw_w, hw_h, ow, oh,
++               vid->smooth ? "smooth" : "sharp");
++         x7fb_scale_write(vid, line);
++         if (vid->scale_fd >= 0)
++         {
++            vid->hw   = true;
++            vid->hw_w = hw_w;
++            vid->hw_h = hw_h;
++         }
++      }
++   }
++   if (!vid->hw)
++      x7fb_scale_write(vid, "off");
 +}
 +
 +/* Scale and write one frame (RGB565 or XRGB8888) */
@@ -411,6 +469,30 @@ index 0000000..e706fb2
 +   unsigned words   = vid->out_w / 2;
 +   unsigned j;
 +   int last_sy      = -1;
++
++   /* hardware upscaling: the frame 1:1 into the top-left (the rest of the
++    * buffer is not shown, so nothing to clear) */
++   if (vid->hw)
++   {
++      unsigned y, x, hw_words = vid->hw_w / 2;
++
++      vid->need_clear = false;
++      for (y = 0; y < vid->hw_h; y++)
++      {
++         const uint8_t *row = (const uint8_t*)frame + (size_t)y * pitch;
++
++         if (rgb32)
++         {
++            const uint32_t *src = (const uint32_t*)row;
++            for (x = 0; x < vid->hw_w; x++)
++               line16[x] = x7fb_xrgb8888_to_rgb565(src[x]);
++         }
++         else
++            memcpy(line16, row, vid->hw_w * sizeof(uint16_t));
++         x7fb_put_row(vid, y, 0, vid->line, hw_words);
++      }
++      return;
++   }
 +
 +   if (unlikely(vid->need_clear))
 +   {
@@ -482,17 +564,17 @@ index 0000000..e706fb2
 +   return hash;
 +}
 +
-+/* one font pixel = a X7FB_FONT_SCALE x X7FB_FONT_SCALE block */
++/* one font pixel = a fs x fs block */
 +static INLINE void x7fb_font_px(x7fb_video_t *vid, unsigned x, unsigned y,
-+      uint16_t colour)
++      unsigned fs, uint16_t colour)
 +{
 +   unsigned k, l;
 +
-+   for (k = 0; k < X7FB_FONT_SCALE; k++)
++   for (k = 0; k < fs; k++)
 +   {
 +      volatile uint16_t *p = (volatile uint16_t*)(vid->fb +
 +            (size_t)(y + k) * vid->line_length) + x;
-+      for (l = 0; l < X7FB_FONT_SCALE; l++)
++      for (l = 0; l < fs; l++)
 +         p[l] = colour;
 +   }
 +}
@@ -503,13 +585,20 @@ index 0000000..e706fb2
 +static void x7fb_blit_text(x7fb_video_t *vid, const char *str)
 +{
 +   bool **font_lut = vid->osd_font->lut;
-+   unsigned char_w = FONT_WIDTH_STRIDE * X7FB_FONT_SCALE;
-+   unsigned x      = vid->out_x + 8;
++   /* with hardware upscaling the text goes into the source picture at 1x
++    * (the GMA enlarges it with the frame); else onto the screen at 2x */
++   unsigned fs     = vid->hw ? 1 : X7FB_FONT_SCALE;
++   unsigned ox     = vid->hw ? 0 : vid->out_x;
++   unsigned oy     = vid->hw ? 0 : vid->out_y;
++   unsigned ow     = vid->hw ? vid->hw_w : vid->out_w;
++   unsigned oh     = vid->hw ? vid->hw_h : vid->out_h;
++   unsigned char_w = FONT_WIDTH_STRIDE * fs;
++   unsigned x      = ox + 4 * fs;
 +   unsigned y;
 +
-+   if (vid->out_h < (FONT_HEIGHT + 4) * X7FB_FONT_SCALE + 2)
++   if (oh < (FONT_HEIGHT + 4) * fs + 2)
 +      return;
-+   y = vid->out_y + vid->out_h - (FONT_HEIGHT + 4) * X7FB_FONT_SCALE;
++   y = oy + oh - (FONT_HEIGHT + 4) * fs;
 +
 +   while (!string_is_empty(str))
 +   {
@@ -517,7 +606,7 @@ index 0000000..e706fb2
 +      bool *glyph;
 +      unsigned gx, gy, pass;
 +
-+      if (x + char_w + 1 >= vid->out_x + vid->out_w)
++      if (x + char_w + 1 >= ox + ow)
 +         return;
 +      if (*str == ' ')
 +      {
@@ -539,9 +628,9 @@ index 0000000..e706fb2
 +            for (gx = 0; gx < FONT_WIDTH; gx++)
 +               if (glyph[gx + gy * FONT_WIDTH])
 +                  x7fb_font_px(vid,
-+                        x + gx * X7FB_FONT_SCALE + (pass ? 0 : 1),
-+                        y + gy * X7FB_FONT_SCALE + (pass ? 0 : 1),
-+                        pass ? 0xFFFF : 0x0000);
++                        x + gx * fs + (pass ? 0 : 1),
++                        y + gy * fs + (pass ? 0 : 1),
++                        fs, pass ? 0xFFFF : 0x0000);
 +      x += char_w;
 +   }
 +}
@@ -552,6 +641,14 @@ index 0000000..e706fb2
 +
 +   if (!vid)
 +      return;
++
++   /* the text console needs the 1:1 picture back */
++   if (vid->scale_fd >= 0)
++   {
++      x7fb_scale_write(vid, "off");
++      if (vid->scale_fd >= 0)
++         close(vid->scale_fd);
++   }
 +
 +   if (vid->fb && vid->fb != MAP_FAILED)
 +   {
@@ -625,8 +722,9 @@ index 0000000..e706fb2
 +   if (!vid)
 +      return NULL;
 +
-+   vid->fd  = -1;
-+   vid->tty = -1;
++   vid->fd       = -1;
++   vid->tty      = -1;
++   vid->scale_fd = -1;
 +
 +   vid->fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
 +   if (vid->fd < 0 || ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) < 0)
@@ -685,6 +783,13 @@ index 0000000..e706fb2
 +   vid->scale_integer = settings->bools.video_scale_integer;
 +   /* video_force_aspect: keep the aspect ratio (else stretch) */
 +   vid->keep_aspect   = settings->bools.video_force_aspect;
++   vid->smooth        = settings->bools.video_smooth;
++   if (access(X7FB_HWSCALE_ON, F_OK) == 0)
++   {
++      vid->scale_fd = open(X7FB_SCALE_ATTR, O_WRONLY | O_CLOEXEC);
++      RARCH_LOG("[x7fb] Hardware upscaling %s.\n",
++            vid->scale_fd >= 0 ? "on" : "not available (old kernel?)");
++   }
 +   vid->menu_w        = 320;
 +   vid->menu_h        = 240;
 +
@@ -890,10 +995,12 @@ index 0000000..e706fb2
 +      return;
 +
 +   if (vid->scale_integer != settings->bools.video_scale_integer ||
-+         vid->keep_aspect != settings->bools.video_force_aspect)
++         vid->keep_aspect != settings->bools.video_force_aspect ||
++         vid->smooth != settings->bools.video_smooth)
 +   {
 +      vid->scale_integer = settings->bools.video_scale_integer;
 +      vid->keep_aspect   = settings->bools.video_force_aspect;
++      vid->smooth        = settings->bools.video_smooth;
 +      if (!vid->menu_active)
 +         x7fb_set_output(vid, vid->src_w, vid->src_h, vid->src_rgb32, false);
 +   }

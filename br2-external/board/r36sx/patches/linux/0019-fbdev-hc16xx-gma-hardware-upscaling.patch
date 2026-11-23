@@ -1,0 +1,165 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Mon, 23 Nov 2026 05:00:00 -0800
+Subject: [PATCH] fbdev: hc16xx-gma: hardware upscaling through a "scale"
+ attribute (X7 Game)
+
+The GMA layer has a polyphase scaler set in its descriptor (hcRTOS hcfb.h gma_header_t: dword0 bit 2 scale on, bit 3 edge preserve, dword2/3 the screen window, dword4 the source size, dword8 bit 0 duplicate instead of filter, dword9 the 4.12 steps, dwords 16..143 the filter table). Add a root-only attribute, "scale", on the platform device: "W H [OW OH] [sharp]" shows the top-left W x H pixels of the buffer (usual pitch) stretched to the whole screen or to a centred OW x OH window; "off" goes back to 1:1. An emulator then writes a native-size frame (a quarter of the pixels for 320x240) and the CPU scales nothing. Upscaling only; the filter table is HiChip's upscale table, as run on an SF3000 by the sf3k-hacking project.
+---
+ drivers/video/fbdev/hc16xx-gma-fb.c | 122 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 122 insertions(+)
+
+diff --git a/drivers/video/fbdev/hc16xx-gma-fb.c b/drivers/video/fbdev/hc16xx-gma-fb.c
+index de6ea8db9..4c3b583f4 100644
+--- a/drivers/video/fbdev/hc16xx-gma-fb.c
++++ b/drivers/video/fbdev/hc16xx-gma-fb.c
+@@ -70,6 +70,36 @@ struct hc_gma {
+ 	unsigned int recoveries, failures;
+ 	unsigned int bpp;		/* 32 (ARGB8888, default) or 16 (RGB565) */
+ 	bool keep_active;		/* X7 Game: own the screen from probe, ignore blanking */
++	/* X7 Game: hardware upscaling of the top-left src_w x src_h pixels of
++	 * the buffer into the out_* window ("scale" attribute); src_w 0 = off */
++	unsigned int src_w, src_h, out_x, out_y, out_w, out_h;
++	bool sharp;			/* scale_mode "duplicate" instead of the filter */
++};
++
++/*
++ * The GMA scaler's polyphase filter for any upscale (4 horizontal taps,
++ * 3 vertical, 16 phases each, 8 fraction bits), descriptor words 16..143.
++ * Computed with HiChip's generator (hcRTOS hc16xx_fb_filter.c, the same for
++ * every upscale ratio); identical to the table the sf3k-hacking project ran
++ * on an SF3000 (lcd_test.c). Descriptor layout: hcRTOS hcfb.h gma_header_t.
++ */
++static const u32 hc_upscale_coef[128] = {
++	0x00e00010, 0x00000010, 0x00000000, 0x00000000, 0x00e00006, 0x00ff001b, 0x00000000, 0x00000000,
++	0x00dc00fe, 0x00fe0028, 0x00000000, 0x00000000, 0x00d400f9, 0x00fc0037, 0x00000000, 0x00000000,
++	0x00cb00f4, 0x00fa0047, 0x00000000, 0x00000000, 0x00bd00f2, 0x00f80059, 0x00000000, 0x00000000,
++	0x00b000f1, 0x00f5006a, 0x00000000, 0x00000000, 0x00a000f1, 0x00f3007c, 0x00000000, 0x00000000,
++	0x008e00f2, 0x00f2008e, 0x00000000, 0x00000000, 0x007c00f3, 0x00f100a0, 0x00000000, 0x00000000,
++	0x006a00f5, 0x00f100b0, 0x00000000, 0x00000000, 0x005900f8, 0x00f200bd, 0x00000000, 0x00000000,
++	0x004700fa, 0x00f400cb, 0x00000000, 0x00000000, 0x003700fc, 0x00f900d4, 0x00000000, 0x00000000,
++	0x002800fe, 0x00fe00dc, 0x00000000, 0x00000000, 0x001b00ff, 0x000600e0, 0x00000000, 0x00000000,
++	0x00800080, 0x00000000, 0x00000000, 0x00000000, 0x0094006e, 0x000001fe, 0x00000000, 0x00000000,
++	0x00a8005c, 0x000001fc, 0x00000000, 0x00000000, 0x00ba004b, 0x000001fb, 0x00000000, 0x00000000,
++	0x00ca003b, 0x000001fb, 0x00000000, 0x00000000, 0x00d8002c, 0x000001fc, 0x00000000, 0x00000000,
++	0x00e2001f, 0x000001ff, 0x00000000, 0x00000000, 0x00e80014, 0x00000004, 0x00000000, 0x00000000,
++	0x00ea000b, 0x0000000b, 0x00000000, 0x00000000, 0x00e80004, 0x00000014, 0x00000000, 0x00000000,
++	0x00e201ff, 0x0000001f, 0x00000000, 0x00000000, 0x00d801fc, 0x0000002c, 0x00000000, 0x00000000,
++	0x00ca01fb, 0x0000003b, 0x00000000, 0x00000000, 0x00ba01fb, 0x0000004b, 0x00000000, 0x00000000,
++	0x00a801fc, 0x0000005c, 0x00000000, 0x00000000, 0x009401fe, 0x0000006e, 0x00000000, 0x00000000,
+ };
+ 
+ /* Keep the hardware descriptor independent of compiler bitfield layout. */
+@@ -104,6 +134,22 @@ static void hc_header(struct hc_gma *g)
+ 	h[4] = cpu_to_le32(WIDTH | (HEIGHT << 16));
+ 	h[5] = cpu_to_le32(255 | (stride << 16));
+ 	h[7] = cpu_to_le32(g->pixels_dma);
++	if (g->src_w) {
++		/* X7 Game: the hardware scales the top-left src_w x src_h pixels
++		 * (same pitch) up into the output window: dword0 bit 2 scale on,
++		 * bit 3 edge preserve (HiChip sets it for upscaling), dword2/3 the
++		 * window (inclusive ends), dword4 the source size, dword8 bit 0
++		 * duplicate instead of filter, dword9 the 4.12 steps src/out. */
++		h[0] |= cpu_to_le32(BIT(2) | BIT(3));
++		h[2] = cpu_to_le32(g->out_x | ((g->out_x + g->out_w - 1) << 16));
++		h[3] = cpu_to_le32(g->out_y | ((g->out_y + g->out_h - 1) << 16));
++		h[4] = cpu_to_le32(g->src_w | (g->src_h << 16));
++		h[8] = cpu_to_le32(g->sharp ? BIT(0) : 0);
++		h[9] = cpu_to_le32((4096 * g->src_w / g->out_w) |
++				   ((4096 * g->src_h / g->out_h) << 16));
++		for (i = 0; i < ARRAY_SIZE(hc_upscale_coef); i++)
++			h[16 + i] = cpu_to_le32(hc_upscale_coef[i]);
++	}
+ 	for (i = 0; i < ARRAY_SIZE(coefficients); i++)
+ 		h[144 + i] = cpu_to_le32(coefficients[i]);
+ 	memcpy(g->header, h, HEADER_BYTES);
+@@ -507,6 +553,81 @@ static int hc_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++/*
++ * X7 Game: "scale" (root only) - hardware upscaling for programs that draw a
++ * small frame (an emulator's 320x240, say) into the top-left of the buffer,
++ * with the buffer's usual pitch; the GMA stretches it, so the CPU writes a
++ * quarter of the pixels and scales nothing.
++ *   echo "320 240" > scale           to the whole screen
++ *   echo "256 224 548 480" > scale   to a 548x480 window, centred
++ *   echo "320 240 sharp" > scale     "duplicate" mode instead of the filter
++ *   echo off > scale
++ * Upscaling only (the filter table is for upscaling), even sizes, at least
++ * 16 pixels. The text console needs it off: whoever turns it on turns it off.
++ */
++static ssize_t scale_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct fb_info *info = dev_get_drvdata(dev);
++	struct hc_gma *g = info->par;
++	ssize_t n;
++
++	mutex_lock(&g->lock);
++	if (!g->src_w)
++		n = sysfs_emit(buf, "off\n");
++	else
++		n = sysfs_emit(buf, "%u %u %u %u %u %u %s\n", g->src_w, g->src_h,
++			       g->out_w, g->out_h, g->out_x, g->out_y,
++			       g->sharp ? "sharp" : "smooth");
++	mutex_unlock(&g->lock);
++	return n;
++}
++
++static ssize_t scale_store(struct device *dev, struct device_attribute *attr,
++			   const char *buf, size_t len)
++{
++	struct fb_info *info = dev_get_drvdata(dev);
++	struct hc_gma *g = info->par;
++	unsigned int sw = 0, sh = 0, ow = WIDTH, oh = HEIGHT;
++	bool off = sysfs_streq(buf, "off");
++	int n, ret = 0;
++
++	if (!off) {
++		/* "W H", "W H OW OH", either followed by an optional "sharp" */
++		n = sscanf(buf, "%u %u %u %u", &sw, &sh, &ow, &oh);
++		if (n != 2 && n != 4)
++			return -EINVAL;
++		if (sw < 16 || sh < 16 || (sw | sh | ow | oh) & 1 ||
++		    ow > WIDTH || oh > HEIGHT || sw > ow || sh > oh)
++			return -EINVAL;
++	}
++	mutex_lock(&g->lock);
++	if (off) {
++		g->src_w = 0;
++	} else {
++		g->src_w = sw;
++		g->src_h = sh;
++		g->out_w = ow;
++		g->out_h = oh;
++		g->out_x = (WIDTH - ow) / 2;
++		g->out_y = (HEIGHT - oh) / 2;
++		g->sharp = strstr(buf, "sharp") != NULL;
++	}
++	hc_header(g);
++	if (g->active)
++		ret = hc_enable_ours(g);
++	mutex_unlock(&g->lock);
++	if (ret)
++		dev_warn(dev, "scale %s: layer did not come back (%d)\n", off ? "off" : "on", ret);
++	return ret ? ret : len;
++}
++static DEVICE_ATTR_ADMIN_RW(scale);
++
++static struct attribute *hc_attrs[] = {
++	&dev_attr_scale.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(hc);
++
+ static const struct of_device_id hc_match[] = {
+ 	{ .compatible = "nzeus,hc16xx-gma-firmware-fb" }, { }
+ };
+@@ -517,6 +638,7 @@ static struct platform_driver hc_driver = {
+ 	.driver = {
+ 		.name = "hc16xx-gma-firmware-fb", .of_match_table = hc_match,
+ 		.suppress_bind_attrs = true,
++		.dev_groups = hc_groups,
+ 	},
+ };
+ builtin_platform_driver(hc_driver);
