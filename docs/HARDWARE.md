@@ -90,6 +90,12 @@ What X7 Game relies on, and where each fact comes from. "NZEUS" = NZEUS Deck
   attribute (write gathering) can be switched on for programs' mappings
   (patch 0018). Measured on the R36SX with x7-fbspeed: a full 640x480 16-bit
   frame takes 4.19 ms uncached, 0.89 ms write-combined, all pixels correct.
+- Page flipping (kernel patch 0020): in RGB565 the buffer holds two
+  640x480 pages; a flip builds the new page's descriptor in a second block
+  and points GMA_DMBA at it under the hold bit, so it takes effect between
+  two frames (HiChip's driver flips the same way). 0x1883ab04 is taken to
+  show the latched descriptor address (to be confirmed: if it never matches,
+  the driver stops waiting for flips and logs it).
 
 ## Sound
 

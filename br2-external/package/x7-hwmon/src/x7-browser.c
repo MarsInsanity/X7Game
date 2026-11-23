@@ -601,8 +601,14 @@ static void console_depth(void)
 	fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		return;
-	if (ioctl(fd, FBIOGET_VSCREENINFO, &v) == 0 && v.bits_per_pixel != CONSOLE_BPP) {
+	/* one page shown from the top (an emulator that crashed may have left
+	 * the second page of page flipping on the screen), at the console's
+	 * depth */
+	if (ioctl(fd, FBIOGET_VSCREENINFO, &v) == 0 &&
+	    (v.bits_per_pixel != CONSOLE_BPP || v.yoffset || v.yres_virtual != v.yres)) {
 		v.bits_per_pixel = CONSOLE_BPP;
+		v.yres_virtual = v.yres;
+		v.yoffset = 0;
 		v.activate = FB_ACTIVATE_NOW;
 		ioctl(fd, FBIOPUT_VSCREENINFO, &v);
 	}

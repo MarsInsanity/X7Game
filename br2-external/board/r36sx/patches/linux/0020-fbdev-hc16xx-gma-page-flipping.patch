@@ -1,0 +1,219 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: X7 Game build <x7game@invalid>
+Date: Mon, 23 Nov 2026 07:00:00 -0800
+Subject: [PATCH] fbdev: hc16xx-gma: page flipping (X7 Game)
+
+Programs drew into the page the GMA was scanning, so full-screen updates tore. In RGB565 the 1.2 MB buffer holds two 640x480 pages: accept yres_virtual 960 at 16 bpp and implement fb_pan_display. A flip builds the new page's descriptor (pixel address + yoffset * pitch) in the second block of a descriptor pair while the hardware still reads the first, then points the layer at it under the hold bit; the GMA latches it at the next frame (as HiChip's driver does). GMA_DMBA_HW (0xb04) shows the latched address: FBIO_WAITFORVSYNC and FB_ACTIVATE_VBL wait on it (at most 40 ms), and a flip waits for the previous one before reusing its block. If the register never matches, flips go on without waiting. Hardware scaling works on either page.
+---
+ drivers/video/fbdev/hc16xx-gma-fb.c | 121 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 109 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/video/fbdev/hc16xx-gma-fb.c b/drivers/video/fbdev/hc16xx-gma-fb.c
+index 4c3b583f4..be006ba68 100644
+--- a/drivers/video/fbdev/hc16xx-gma-fb.c
++++ b/drivers/video/fbdev/hc16xx-gma-fb.c
+@@ -38,6 +38,8 @@
+ #define GMA_ALPHA 0x308
+ #define GMA_MASK 0x350
+ #define GMA_CTL_HW 0xb00
++#define GMA_DMBA_HW 0xb04		/* the descriptor address the hardware latched */
++#define FLIP_WAIT_US 40000		/* > 2 frames: give up waiting after this */
+ #define WIDTH 640
+ #define HEIGHT 480
+ #define STRIDE (WIDTH * 4)		/* the 32-bit stride; 16 bits uses half */
+@@ -60,8 +62,16 @@ struct hc_gma {
+ 	void __iomem *regs;
+ 	void *pixels;
+ 	dma_addr_t pixels_dma;
+-	__le32 *header;
++	__le32 *header;			/* the descriptor in use (or about to be) */
+ 	dma_addr_t header_dma;
++	/* X7 Game: page flipping - the other descriptor of the pair, built for
++	 * the next page while the hardware still reads the first one */
++	__le32 *header2;
++	dma_addr_t header2_dma;
++	void *header_base;		/* the pair's allocation, for freeing */
++	dma_addr_t header_base_dma;
++	unsigned int yoffset;		/* first buffer row shown (0 or HEIGHT) */
++	bool flip_status;		/* GMA_DMBA_HW tells when a flip took effect */
+ 	struct mutex lock;
+ 	u32 palette[16];
+ 	u32 saved_ctl, saved_dmba, saved_alpha, saved_mask;
+@@ -133,7 +143,7 @@ static void hc_header(struct hc_gma *g)
+ 	h[3] = cpu_to_le32((HEIGHT - 1) << 16);
+ 	h[4] = cpu_to_le32(WIDTH | (HEIGHT << 16));
+ 	h[5] = cpu_to_le32(255 | (stride << 16));
+-	h[7] = cpu_to_le32(g->pixels_dma);
++	h[7] = cpu_to_le32(g->pixels_dma + g->yoffset * stride);
+ 	if (g->src_w) {
+ 		/* X7 Game: the hardware scales the top-left src_w x src_h pixels
+ 		 * (same pitch) up into the output window: dword0 bit 2 scale on,
+@@ -347,19 +357,26 @@ static int hc_setcolreg(unsigned int reg, unsigned int red, unsigned int green,
+ 
+ static int hc_check_var(struct fb_var_screeninfo *v, struct fb_info *info)
+ {
+-	if (v->xres != WIDTH || v->yres != HEIGHT ||
+-	    v->xres_virtual != WIDTH || v->yres_virtual != HEIGHT ||
++	/* X7 Game: in RGB565 the buffer holds two pages (640x960) for page
++	 * flipping; ARGB8888 fills it with one */
++	if (v->xres != WIDTH || v->yres != HEIGHT || v->xres_virtual != WIDTH ||
+ 	    (v->bits_per_pixel != 32 && v->bits_per_pixel != 16) ||
+-	    v->xoffset || v->yoffset || v->nonstd || v->rotate || v->grayscale)
++	    !(v->yres_virtual == HEIGHT ||
++	      (v->yres_virtual == 2 * HEIGHT && v->bits_per_pixel == 16)) ||
++	    v->xoffset || v->yoffset + HEIGHT > v->yres_virtual ||
++	    v->nonstd || v->rotate || v->grayscale)
+ 		return -EINVAL;
+ 	{
+ 		unsigned int bpp = v->bits_per_pixel;
++		unsigned int vyres = v->yres_virtual, yoffset = v->yoffset;
+ 		/* fb_set_var() reads activate after this check: keep the
+ 		 * caller's, so FB_ACTIVATE_TEST stays a test */
+ 		u32 activate = v->activate;
+ 
+ 		*v = info->var;		/* everything else stays fixed */
+ 		hc_fill_var(v, bpp);
++		v->yres_virtual = vyres;
++		v->yoffset = yoffset;
+ 		v->activate = activate;
+ 	}
+ 	return 0;
+@@ -376,19 +393,89 @@ static int hc_set_par(struct fb_info *info)
+ 	if (bpp != 16 && bpp != 32)
+ 		return -EINVAL;
+ 	mutex_lock(&g->lock);
+-	if (bpp != g->bpp) {
++	if (bpp != g->bpp || info->var.yoffset != g->yoffset) {
++		bool new_format = bpp != g->bpp;
++
+ 		g->bpp = bpp;
++		g->yoffset = info->var.yoffset;
+ 		info->fix.line_length = WIDTH * (bpp / 8);
+ 		hc_header(g);
+ 		if (g->active)
+ 			ret = hc_enable_ours(g);
+-		dev_info(g->dev, "pixel format now %s (%d)\n",
+-			 bpp == 16 ? "RGB565" : "ARGB8888", ret);
++		if (new_format)
++			dev_info(g->dev, "pixel format now %s (%d)\n",
++				 bpp == 16 ? "RGB565" : "ARGB8888", ret);
+ 	}
+ 	mutex_unlock(&g->lock);
+ 	return ret;
+ }
+ 
++/*
++ * X7 Game: page flipping. The pixel address is in the descriptor, and the
++ * GMA latches register writes made under the hold bit at the next frame.
++ * So a flip builds the new page's descriptor in the second block of the pair
++ * (the hardware still reads the first), points the layer at it under hold
++ * and releases: the picture changes between two frames, never in the middle
++ * of one (HiChip's own driver flips like this). GMA_DMBA_HW shows the
++ * address the hardware latched, which tells when the flip took effect.
++ */
++static void hc_wait_flip(struct hc_gma *g)
++{
++	u32 now;
++
++	if (!READ_ONCE(g->flip_status))
++		return;
++	if (readl_poll_timeout(g->regs + GMA_DMBA_HW, now,
++			       now == READ_ONCE(g->header_dma), 200, FLIP_WAIT_US)) {
++		/* the register doesn't follow (another SoC revision?): flip
++		 * without waiting from now on, which still beats no flipping */
++		WRITE_ONCE(g->flip_status, false);
++		dev_warn(g->dev, "page flip: the hardware's descriptor address (%08x) never matched ours; not waiting for flips\n",
++			 now);
++	}
++}
++
++static int hc_pan_display(struct fb_var_screeninfo *v, struct fb_info *info)
++{
++	struct hc_gma *g = info->par;
++
++	if (v->xoffset || v->yoffset + HEIGHT > info->var.yres_virtual)
++		return -EINVAL;
++	mutex_lock(&g->lock);
++	if (v->yoffset != g->yoffset) {
++		/* a flip still waiting for its frame keeps using the other
++		 * block: let it happen before that block is rewritten */
++		hc_wait_flip(g);
++		g->yoffset = v->yoffset;
++		swap(g->header, g->header2);
++		swap(g->header_dma, g->header2_dma);
++		hc_header(g);
++		if (g->active) {
++			dma_wmb();
++			writel(g->saved_mask | BIT(0), g->regs + GMA_MASK);
++			writel(g->header_dma, g->regs + GMA_DMBA);
++			writel(g->saved_mask, g->regs + GMA_MASK);
++		}
++	}
++	mutex_unlock(&g->lock);
++	/* FB_ACTIVATE_VBL: return only once the new page is on the screen */
++	if (v->activate & FB_ACTIVATE_VBL)
++		hc_wait_flip(g);
++	return 0;
++}
++
++/* FBIO_WAITFORVSYNC: wait until the last flip took effect (at once if it
++ * already has), so the page that was shown before can be drawn into */
++static int hc_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
++{
++	struct hc_gma *g = info->par;
++
++	if (cmd != FBIO_WAITFORVSYNC)
++		return -ENOTTY;
++	hc_wait_flip(g);
++	return 0;
++}
++
+ /*
+  * X7 Game: write-combined mmap(), off by default. User space (the emulators)
+  * draws into this buffer with sequential stores; mapped uncached, every store
+@@ -437,6 +524,8 @@ static const struct fb_ops hc_ops = {
+ 	.fb_setcolreg = hc_setcolreg,
+ 	.fb_blank = hc_blank,
+ 	.fb_mmap = hc_mmap,
++	.fb_pan_display = hc_pan_display,
++	.fb_ioctl = hc_ioctl,
+ };
+ 
+ static int hc_probe(struct platform_device *pdev)
+@@ -469,7 +558,15 @@ static int hc_probe(struct platform_device *pdev)
+ 		goto fail_info;
+ 	}
+ 	g->pixels = dma_alloc_coherent(g->dev, PIXEL_BYTES, &g->pixels_dma, GFP_KERNEL);
+-	g->header = dma_alloc_coherent(g->dev, HEADER_BYTES, &g->header_dma, GFP_KERNEL);
++	/* two descriptors in one allocation, for page flipping (640 bytes
++	 * each keeps the second one 32-byte aligned too) */
++	g->header_base = dma_alloc_coherent(g->dev, 2 * HEADER_BYTES, &g->header_base_dma,
++					    GFP_KERNEL);
++	g->header = g->header_base;
++	g->header_dma = g->header_base_dma;
++	g->header2 = g->header_base ? g->header_base + HEADER_BYTES : NULL;
++	g->header2_dma = g->header_base_dma + HEADER_BYTES;
++	g->flip_status = true;
+ 	if (!g->pixels || !g->header) {
+ 		ret = -ENOMEM;
+ 		goto fail_dma;
+@@ -485,7 +582,7 @@ static int hc_probe(struct platform_device *pdev)
+ 		.id = "hc16xx-gma-argb", .smem_start = g->pixels_dma,
+ 		.smem_len = PIXEL_BYTES, .type = FB_TYPE_PACKED_PIXELS,
+ 		.visual = FB_VISUAL_TRUECOLOR, .line_length = STRIDE,
+-		.accel = FB_ACCEL_NONE,
++		.ypanstep = 1, .accel = FB_ACCEL_NONE,
+ 	};
+ 	info->var = (struct fb_var_screeninfo) {
+ 		.xres = WIDTH, .yres = HEIGHT, .xres_virtual = WIDTH,
+@@ -544,8 +641,8 @@ static int hc_probe(struct platform_device *pdev)
+ 		dev_info(g->dev, "fb%d ready, 640x480 ARGB8888, native CSC, INACTIVE until explicit unblank\n", info->node);
+ 	return 0;
+ fail_dma:
+-	if (g->header)
+-		dma_free_coherent(g->dev, HEADER_BYTES, g->header, g->header_dma);
++	if (g->header_base)
++		dma_free_coherent(g->dev, 2 * HEADER_BYTES, g->header_base, g->header_base_dma);
+ 	if (g->pixels)
+ 		dma_free_coherent(g->dev, PIXEL_BYTES, g->pixels, g->pixels_dma);
+ fail_info:

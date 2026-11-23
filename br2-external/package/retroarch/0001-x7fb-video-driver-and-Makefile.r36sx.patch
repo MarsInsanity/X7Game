@@ -194,10 +194,10 @@ index 0000000..603eea8
 +.PHONY: all clean
 diff --git a/gfx/drivers/x7fb_gfx.c b/gfx/drivers/x7fb_gfx.c
 new file mode 100644
-index 0000000..7fe19de
+index 0000000..7b225f7
 --- /dev/null
 +++ b/gfx/drivers/x7fb_gfx.c
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,976 @@
 +/*  RetroArch - A frontend for libretro.
 + *  Copyright (C) 2026 - X7 Game
 + *
@@ -293,7 +293,15 @@ index 0000000..7fe19de
 +   char scale_now[48];               /* the last line written to scale_fd */
 +   bool menu_active;
 +   bool was_in_menu;
-+   bool need_clear;                  /* clear the borders before the next blit */
++   unsigned need_clear;              /* pages whose borders still need clearing */
++   /* page flipping (kernel patch 0020): with two pages, frames are drawn
++    * into the hidden one and shown with FBIOPAN_DISPLAY at a frame boundary,
++    * so they never tear */
++   uint8_t *draw;                    /* the page being drawn (fb + page offset) */
++   unsigned pages;                   /* 2 = flipping, 1 = drawing on screen */
++   unsigned back;                    /* the hidden page (0 or 1) */
++   bool flip_pending;                /* a flip may not have taken effect yet */
++   struct fb_var_screeninfo var;     /* for FBIOPAN_DISPLAY */
 +   bool menu_dirty;                  /* RGUI uploaded a texture not drawn yet */
 +   bool quitting;
 +   /* the last game frame written to the screen, to skip redrawing it
@@ -320,7 +328,7 @@ index 0000000..7fe19de
 +static INLINE void x7fb_put_row(x7fb_video_t *vid, unsigned y,
 +      unsigned x, const uint32_t *src, unsigned words)
 +{
-+   volatile uint32_t *dst = (volatile uint32_t*)(vid->fb +
++   volatile uint32_t *dst = (volatile uint32_t*)(vid->draw +
 +         (size_t)y * vid->line_length + x * 2);
 +   unsigned i;
 +
@@ -328,17 +336,57 @@ index 0000000..7fe19de
 +      dst[i] = src[i];
 +}
 +
++/* clear the page being drawn */
 +static void x7fb_clear_screen(x7fb_video_t *vid)
 +{
 +   unsigned y, i, words = vid->screen_w / 2;
 +
 +   for (y = 0; y < vid->screen_h; y++)
 +   {
-+      volatile uint32_t *dst = (volatile uint32_t*)(vid->fb +
++      volatile uint32_t *dst = (volatile uint32_t*)(vid->draw +
 +            (size_t)y * vid->line_length);
 +      for (i = 0; i < words; i++)
 +         dst[i] = 0;
 +   }
++}
++
++static INLINE uint8_t *x7fb_page(x7fb_video_t *vid, unsigned page)
++{
++   return vid->fb + (size_t)page * vid->screen_h * vid->line_length;
++}
++
++/* Before drawing into the hidden page: it was on the screen until the last
++ * flip took effect, which the kernel waits for (at once if it already has;
++ * the flip latches at the next frame, at most 16.7 ms later). */
++static void x7fb_begin_draw(x7fb_video_t *vid)
++{
++   uint32_t crtc = 0;
++
++   if (vid->flip_pending)
++   {
++      ioctl(vid->fd, FBIO_WAITFORVSYNC, &crtc);
++      vid->flip_pending = false;
++   }
++}
++
++/* Show the page just drawn (at the next frame boundary); draw into the
++ * other one from now on. If the kernel refuses, go on with one page. */
++static void x7fb_flip(x7fb_video_t *vid)
++{
++   if (vid->pages < 2)
++      return;
++   vid->var.xoffset  = 0;
++   vid->var.yoffset  = vid->back * vid->screen_h;
++   vid->var.activate = FB_ACTIVATE_NOW;
++   if (ioctl(vid->fd, FBIOPAN_DISPLAY, &vid->var) < 0)
++   {
++      RARCH_WARN("[x7fb] Page flipping refused: drawing on the screen.\n");
++      vid->pages = 1;
++      return;                        /* keep drawing into the shown page */
++   }
++   vid->back         ^= 1;
++   vid->draw          = x7fb_page(vid, vid->back);
++   vid->flip_pending  = true;
 +}
 +
 +/* Tell the GMA how to scale ("W H OW OH smooth|sharp", or "off"). A failed
@@ -431,7 +479,7 @@ index 0000000..7fe19de
 +   for (i = 0; i < out_h; i++)
 +      vid->ymap[i] = (uint16_t)((i * src_h) / out_h);
 +
-+   vid->need_clear = true;
++   vid->need_clear = vid->pages;
 +
 +   /* Hardware upscaling when the GMA can do this size: even sizes, at
 +    * least 16 pixels, upscaling only (an odd last column or row is left
@@ -476,7 +524,7 @@ index 0000000..7fe19de
 +   {
 +      unsigned y, x, hw_words = vid->hw_w / 2;
 +
-+      vid->need_clear = false;
++      vid->need_clear = 0;
 +      for (y = 0; y < vid->hw_h; y++)
 +      {
 +         const uint8_t *row = (const uint8_t*)frame + (size_t)y * pitch;
@@ -497,7 +545,7 @@ index 0000000..7fe19de
 +   if (unlikely(vid->need_clear))
 +   {
 +      x7fb_clear_screen(vid);
-+      vid->need_clear = false;
++      vid->need_clear--;
 +   }
 +
 +   /* fast path: exact 2x of a 16-bit frame (e.g. 320x240 -> 640x480) */
@@ -572,7 +620,7 @@ index 0000000..7fe19de
 +
 +   for (k = 0; k < fs; k++)
 +   {
-+      volatile uint16_t *p = (volatile uint16_t*)(vid->fb +
++      volatile uint16_t *p = (volatile uint16_t*)(vid->draw +
 +            (size_t)(y + k) * vid->line_length) + x;
 +      for (l = 0; l < fs; l++)
 +         p[l] = colour;
@@ -652,16 +700,27 @@ index 0000000..7fe19de
 +
 +   if (vid->fb && vid->fb != MAP_FAILED)
 +   {
-+      x7fb_clear_screen(vid);
++      unsigned page;
++
++      for (page = 0; page < MAX(vid->pages, 1u); page++)
++      {
++         vid->draw = x7fb_page(vid, page);
++         x7fb_clear_screen(vid);
++      }
 +      munmap(vid->fb, vid->fb_size);
 +   }
 +   if (vid->fd >= 0)
 +   {
 +      struct fb_var_screeninfo var;
++      /* one page, shown from the top, at the console's depth */
 +      if (vid->orig_bpp && ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) == 0 &&
-+            var.bits_per_pixel != vid->orig_bpp)
++            (var.bits_per_pixel != vid->orig_bpp || var.yoffset ||
++             var.yres_virtual != var.yres))
 +      {
 +         var.bits_per_pixel = vid->orig_bpp;
++         var.yres_virtual   = var.yres;
++         var.yoffset        = 0;
++         var.activate       = FB_ACTIVATE_NOW;
 +         ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var);
 +      }
 +      close(vid->fd);
@@ -745,19 +804,29 @@ index 0000000..7fe19de
 +   if (vid->tty >= 0)
 +      ioctl(vid->tty, KDSETMODE, KD_GRAPHICS);
 +
-+   /* the whole screen runs in RGB565: half the bytes to push per frame */
-+   if (var.bits_per_pixel != 16)
++   /* the whole screen runs in RGB565: half the bytes to push per frame,
++    * and room for two pages (page flipping) where the kernel offers it */
++   var.bits_per_pixel = 16;
++   var.yres_virtual   = var.yres * 2;
++   var.yoffset        = 0;
++   var.activate       = FB_ACTIVATE_NOW;
++   if (ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var) < 0)
 +   {
-+      var.bits_per_pixel = 16;
-+      var.activate       = FB_ACTIVATE_NOW;
-+      if (ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var) < 0 ||
-+            ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) < 0 ||
-+            var.bits_per_pixel != 16)
++      var.yres_virtual = var.yres;   /* an older kernel: one page */
++      if (ioctl(vid->fd, FBIOPUT_VSCREENINFO, &var) < 0)
 +      {
 +         RARCH_ERR("[x7fb] The framebuffer has no 16-bit mode.\n");
 +         goto error;
 +      }
 +   }
++   if (ioctl(vid->fd, FBIOGET_VSCREENINFO, &var) < 0 ||
++         var.bits_per_pixel != 16)
++   {
++      RARCH_ERR("[x7fb] The framebuffer has no 16-bit mode.\n");
++      goto error;
++   }
++   vid->var   = var;
++   vid->pages = var.yres_virtual >= var.yres * 2 ? 2 : 1;
 +   if (ioctl(vid->fd, FBIOGET_FSCREENINFO, &fix) < 0)
 +      goto error;
 +
@@ -777,7 +846,19 @@ index 0000000..7fe19de
 +   /* fbcon no longer redraws the screen at the depth change: clear the
 +    * console picture left behind, which would show as noise in RGB565
 +    * until the first frame (loading the content can take seconds) */
-+   x7fb_clear_screen(vid);
++   {
++      unsigned page;
++
++      if (vid->pages == 2 && vid->fb_size < 2 * (size_t)vid->screen_h * vid->line_length)
++         vid->pages = 1;             /* no room for a second page after all */
++      for (page = 0; page < vid->pages; page++)
++      {
++         vid->draw = x7fb_page(vid, page);
++         x7fb_clear_screen(vid);
++      }
++   }
++   vid->back = vid->pages - 1;       /* page 0 is on the screen */
++   vid->draw = x7fb_page(vid, vid->back);
 +
 +   vid->rgb32         = video->rgb32;
 +   vid->scale_integer = settings->bools.video_scale_integer;
@@ -804,8 +885,9 @@ index 0000000..7fe19de
 +   }
 +
 +   x7fb_set_output(vid, vid->screen_w / 2, vid->screen_h / 2, false, false);
-+   RARCH_LOG("[x7fb] %ux%u RGB565 framebuffer, line %u bytes.\n",
-+         vid->screen_w, vid->screen_h, vid->line_length);
++   RARCH_LOG("[x7fb] %ux%u RGB565 framebuffer, line %u bytes, %s.\n",
++         vid->screen_w, vid->screen_h, vid->line_length,
++         vid->pages == 2 ? "page flipping" : "one page");
 +   return vid;
 +
 +error:
@@ -889,6 +971,7 @@ index 0000000..7fe19de
 +
 +         if (likely(!skip))
 +         {
++            x7fb_begin_draw(vid);
 +            x7fb_blit(vid, frame, width, height, pitch, vid->rgb32);
 +            vid->last_frame = frame;
 +            vid->last_w     = width;
@@ -912,6 +995,7 @@ index 0000000..7fe19de
 +       * (need_clear, also set on entering the menu) or for a new message */
 +      if (vid->menu_dirty || vid->need_clear || msg_changed)
 +      {
++         x7fb_begin_draw(vid);
 +         x7fb_blit(vid, vid->menu_texture, vid->menu_w, vid->menu_h,
 +               vid->menu_w * sizeof(uint16_t), false);
 +         vid->menu_dirty = false;
@@ -921,10 +1005,28 @@ index 0000000..7fe19de
 +   }
 +
 +   /* the text stays on the screen until the picture under it is redrawn */
-+   if (drawn || msg_changed)
++   if (drawn)
 +   {
 +      if (*msg)
 +         x7fb_blit_text(vid, msg);
++      strlcpy(vid->last_msg, msg, sizeof(vid->last_msg));
++      x7fb_flip(vid);
++   }
++   else if (msg_changed)
++   {
++      /* a message changed without a new picture (the core repeated its
++       * frame): write it straight onto the page on the screen; the hidden
++       * one holds an older picture */
++      uint8_t *drawing = vid->draw;
++
++      if (vid->pages == 2)
++      {
++         x7fb_begin_draw(vid);
++         vid->draw = x7fb_page(vid, vid->back ^ 1);
++      }
++      if (*msg)
++         x7fb_blit_text(vid, msg);
++      vid->draw = drawing;
 +      strlcpy(vid->last_msg, msg, sizeof(vid->last_msg));
 +   }
 +
