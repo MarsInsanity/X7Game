@@ -1,6 +1,6 @@
 #!/bin/sh
-# X7 Game: display settings from x7game.cfg, both off by default until they
-# are confirmed on this console.
+# X7 Game: display settings from x7game.cfg (both on by default since they
+# were confirmed on the console; 0 turns one off).
 #   fb_writecombine=1  map the screen write-combined for programs ("uncached
 #                      accelerated", kernel patch 0018); x7-fbspeed measures it
 #   fb_hwscale=1       let RetroArch's x7fb driver have the display hardware

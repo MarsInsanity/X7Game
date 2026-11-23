@@ -84,10 +84,12 @@ What X7 Game relies on, and where each fact comes from. "NZEUS" = NZEUS Deck
 - Hardware upscaling of that layer (kernel patch 0019,
   `/sys/bus/platform/devices/1883a000.framebuffer/scale`) uses HiChip's
   upscale filter table, the one the sf3k-hacking project ran on an SF3000
-  (github.com/SiarheiVolkau/sf3k-hacking). Not yet confirmed on the R36SX.
+  (github.com/SiarheiVolkau/sf3k-hacking). Confirmed on the R36SX (X7 Game
+  dev-46883ac): by hand and with RetroArch.
 - The CPU writes the buffer uncached; the 74K's "uncached accelerated"
   attribute (write gathering) can be switched on for programs' mappings
-  (patch 0018), also not yet confirmed on this SoC's bus.
+  (patch 0018). Measured on the R36SX with x7-fbspeed: a full 640x480 16-bit
+  frame takes 4.19 ms uncached, 0.89 ms write-combined, all pixels correct.
 
 ## Sound
 

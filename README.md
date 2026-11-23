@@ -239,11 +239,11 @@ x7-update --status           running system slot and versions
 poweroff                     switch the console off
 ```
 
-Display experiments (both off by default, see `x7game.cfg`): write-combined
-screen memory (`fb_writecombine=1`, measure first with `x7-fbspeed`) and
-hardware scaling of RetroArch's pictures (`fb_hwscale=1`). To see the
-scaler by hand over the USB shell (it enlarges the top-left quarter of the
-screen; `off` puts it back):
+Display speed-ups (both on by default; `0` in `x7game.cfg` turns one off):
+write-combined screen memory (`fb_writecombine`, about 4.7x faster screen
+writes; `x7-fbspeed` measures it) and hardware scaling of RetroArch's
+pictures (`fb_hwscale`). To see the scaler by hand over the USB shell (it
+enlarges the top-left quarter of the screen; `off` puts it back):
 
 ```
 echo "320 240" > /sys/bus/platform/devices/1883a000.framebuffer/scale
