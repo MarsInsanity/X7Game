@@ -13,6 +13,13 @@ none), memory cards and save states in /share/saves/psx, settings in
 /share/system/pcsx4all. SIGTERM/SIGINT: a memory card save in progress may
 finish (up to 2 s), then memory cards flushed, screen and console
 restored, clean exit; a 4 s watchdog forces it.
+
+With X7 Game's kernel (patches 0019/0020): page flipping (two RGB565
+pages, every frame drawn into the hidden one and shown at the next frame
+boundary, so it never tears) and, when /run/x7-hwscale exists, hardware
+scaling (the PS1 picture and the menu written 1:1, the display enlarges
+them: sharp for exact multiples, filtered otherwise). Falls back to one
+page and CPU scaling on other kernels.
 diff --git a/Makefile.r36sx b/Makefile.r36sx
 new file mode 100644
 index 0000000..83240d2
@@ -1796,18 +1803,22 @@ index 0000000..c50ff87
 +#endif
 diff --git a/src/port/r36sx/vout_x7.c b/src/port/r36sx/vout_x7.c
 new file mode 100644
-index 0000000..7dfe83f
+index 0000000..de79852
 --- /dev/null
 +++ b/src/port/r36sx/vout_x7.c
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,275 @@
 +/*
 + * gpulib video output for X7 Game (R36SX): replaces gpu/gpulib/vout_port.c.
 + *
 + * The PS1 picture (256/320/368/384/512/640 wide, up to 240/256/480 lines,
-+ * 15- or 24-bit) is scaled to fill the 640x480 screen: the PS1 picture is
-+ * 4:3 like the screen. 320x240 (most games) is an exact 2x; other sizes are
-+ * nearest-neighbour. Lines the game does not display (screen.h < vres) stay
-+ * black, centred like on a TV.
++ * 15- or 24-bit) fills the 640x480 screen: the PS1 picture is 4:3 like the
++ * screen. With hardware scaling (X7 Game kernel patch 0019) it is written
++ * 1:1 and the display enlarges it (sharp for exact multiples, filtered
++ * otherwise); else the CPU scales it: 320x240 (most games) is an exact 2x,
++ * other sizes are nearest-neighbour. Lines the game does not display
++ * (screen.h < vres) stay black, centred like on a TV. Each frame goes to the
++ * hidden page and is shown at the next frame boundary (page flipping, patch
++ * 0020), so it never tears.
 + *
 + * The framebuffer is uncached: every screen line is built in a cached line
 + * buffer and written once (twice for 2x) with sequential 32-bit stores; the
@@ -1842,8 +1853,8 @@ index 0000000..7dfe83f
 +static int xmap_w = 0;
 +
 +/* where the picture was last drawn: the black bands above and below it are
-+ * only written again when that changes (or after the menu) */
-+static int bands_top = -1, bands_h = -1;
++ * only written again when that changes (or after the menu), on each page */
++static int bands_top = -1, bands_h = -1, bands_todo = 0;
 +
 +void x7_vout_invalidate(void)
 +{
@@ -1923,6 +1934,45 @@ index 0000000..7dfe83f
 +	}
 +}
 +
++/* 15-bit line, 1:1 (hardware scaling): w pixels into line[] */
++static void native_line15(const uint16_t *src, int w, int bgr)
++{
++	uint16_t *l16 = (uint16_t *)line;
++	int i;
++
++	if (bgr) {
++		for (i = 0; i < w; i++)
++			l16[i] = BGR565(src[i]);
++	} else {
++		for (i = 0; i < w; i++)
++			l16[i] = RGB565(src[i]);
++	}
++}
++
++/* 24-bit line, 1:1 */
++static void native_line24(const uint8_t *s8, int w, int bgr)
++{
++	uint16_t *l16 = (uint16_t *)line;
++	int i;
++
++	for (i = 0; i < w; i++, s8 += 3)
++		l16[i] = bgr ? RGB24_565(s8[2], s8[1], s8[0]) : RGB24_565(s8[0], s8[1], s8[2]);
++}
++
++/* the start of displayed VRAM line sy (unwrapped if it crosses the edge) */
++static const uint8_t *vram_line(int x0, int y0, int sy, int line_bytes)
++{
++	const uint16_t *row = gpu.vram + ((unsigned int)((y0 + sy) & 511) << 10);
++
++	if (x0 * 2 + line_bytes > 2048) {
++		int n = (line_bytes + 1) / 2, i;
++		for (i = 0; i < n; i++)
++			wrapbuf[i] = row[(x0 + i) & 1023];
++		return (const uint8_t *)wrapbuf;
++	}
++	return (const uint8_t *)row + x0 * 2;
++}
++
 +void vout_update(void)
 +{
 +	const int x0 = gpu.screen.x;
@@ -1948,27 +1998,53 @@ index 0000000..7dfe83f
 +	top = (X7_FB_H - out_h) / 2;
 +	step = ((unsigned int)vres << 16) / X7_FB_H;
 +
++	/* the page drawn now was on the screen until the last flip took effect */
++	x7_begin_frame();
++
++	/* hardware scaling: the w x h picture 1:1 at the top-left of the page,
++	 * enlarged by the display into a 640 x out_h window (the PS1's 4:3);
++	 * even sizes, upscaling only */
++	if (x7_fb_hwscale && w <= X7_FB_W) {
++		int sw = w & ~1, sh = h & ~1, oh = out_h & ~1;
++		int sharp = (sw * 2 == X7_FB_W || sw == X7_FB_W) && (oh == 2 * sh || oh == sh);
++
++		if (sw >= 16 && sh >= 16 && sh <= oh &&
++		    x7_scale(sw, sh, X7_FB_W, oh, sharp) == 0) {
++			for (r = 0; r < sh; r++) {
++				const uint8_t *s8 = vram_line(x0, y0, r, line_bytes);
++
++				if (rgb24)
++					native_line24(s8, sw, bgr);
++				else
++					native_line15((const uint16_t *)(const void *)s8, sw, bgr);
++				x7_fb_write_words(r, line, sw / 2);
++			}
++			bands_top = -1;		/* the CPU path clears them again */
++			if (Config.ShowFps)
++				x7_fb_text(0, 0, pl_data.stats_msg);
++			x7_present();
++			return;
++		}
++	}
++	x7_scale(0, 0, 0, 0, 0);
++
 +	if (top != bands_top || out_h != bands_h) {
-+		x7_fb_clear_lines(0, top);
-+		x7_fb_clear_lines(top + out_h, X7_FB_H);
 +		bands_top = top;
 +		bands_h = out_h;
++		bands_todo = 2;			/* once on each page */
++	}
++	if (bands_todo) {
++		x7_fb_clear_lines(0, top);
++		x7_fb_clear_lines(top + out_h, X7_FB_H);
++		bands_todo--;
 +	}
 +
 +	for (r = 0; r < out_h; r++, acc += step) {
 +		int sy = (int)(acc >> 16);
 +
 +		if (sy != last_sy) {
-+			const uint16_t *row = gpu.vram + ((unsigned int)((y0 + sy) & 511) << 10);
-+			const uint8_t *s8 = (const uint8_t *)row + x0 * 2;
++			const uint8_t *s8 = vram_line(x0, y0, sy, line_bytes);
 +
-+			if (x0 * 2 + line_bytes > 2048) {
-+				/* the line wraps around the right edge of VRAM */
-+				int n = (line_bytes + 1) / 2, i;
-+				for (i = 0; i < n; i++)
-+					wrapbuf[i] = row[(x0 + i) & 1023];
-+				s8 = (const uint8_t *)wrapbuf;
-+			}
 +			if (rgb24)
 +				build_line24(s8, w, bgr);
 +			else
@@ -1980,6 +2056,7 @@ index 0000000..7dfe83f
 +
 +	if (Config.ShowFps)
 +		x7_fb_text(8, 8, pl_data.stats_msg);
++	x7_present();
 +}
 +
 +int vout_init(void)
@@ -1995,7 +2072,10 @@ index 0000000..7dfe83f
 +/* PS1 display disabled: black screen */
 +void vout_blank(void)
 +{
++	x7_begin_frame();
++	x7_scale(0, 0, 0, 0, 0);
 +	x7_fb_clear_lines(0, X7_FB_H);
++	x7_present();
 +	x7_vout_invalidate();
 +}
 +
@@ -2004,10 +2084,10 @@ index 0000000..7dfe83f
 +}
 diff --git a/src/port/r36sx/x7_hw.c b/src/port/r36sx/x7_hw.c
 new file mode 100644
-index 0000000..e6be674
+index 0000000..b58fc4b
 --- /dev/null
 +++ b/src/port/r36sx/x7_hw.c
-@@ -0,0 +1,571 @@
+@@ -0,0 +1,698 @@
 +/*
 + * X7 Game (R36SX) hardware layer for PCSX4ALL: framebuffer, buttons,
 + * signals. No SDL.
@@ -2050,6 +2130,22 @@ index 0000000..e6be674
 +static size_t fb_map_size;
 +static struct fb_var_screeninfo fb_var_orig;
 +static int fb_var_saved = 0;
++
++/* page flipping: the mapping, its two pages, the hidden one */
++#define SCALE_ATTR "/sys/bus/platform/devices/1883a000.framebuffer/scale"
++static uint8_t *fb_base;
++static unsigned int fb_line;		/* bytes per line */
++static int fb_pages = 1, fb_back = 0, flip_pending = 0;
++static struct fb_var_screeninfo fb_var_cur;
++/* hardware scaling */
++int x7_fb_hwscale = 0;
++static int scale_fd = -1;
++static char scale_now[48];
++
++static volatile uint32_t *fb_page(int page)
++{
++	return (volatile uint32_t *)(fb_base + (size_t)page * X7_FB_H * fb_line);
++}
 +static int tty_fd = -1;
 +static int tty_mode_orig = -1;
 +static volatile sig_atomic_t video_restored = 0;
@@ -2102,13 +2198,15 @@ index 0000000..e6be674
 +	if (tty_fd >= 0 && ioctl(tty_fd, KDSETMODE, KD_GRAPHICS) < 0)
 +		perror("x7: KDSETMODE");
 +
++	/* RGB565, two pages (page flipping) where the kernel offers them */
 +	var = fb_var_orig;
 +	var.bits_per_pixel = 16;
 +	var.xoffset = 0;
 +	var.yoffset = 0;
++	var.yres_virtual = X7_FB_H * 2;
 +	var.activate = FB_ACTIVATE_NOW;
-+	if (fb_var_orig.bits_per_pixel != 16 ||
-+	    fb_var_orig.xoffset || fb_var_orig.yoffset) {
++	if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &var) < 0) {
++		var.yres_virtual = X7_FB_H;	/* an older kernel: one page */
 +		if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &var) < 0)
 +			perror("x7: FBIOPUT_VSCREENINFO");
 +	}
@@ -2135,10 +2233,30 @@ index 0000000..e6be674
 +		goto fail;
 +	}
 +	x7_fb_pitch32 = fix.line_length / 4;
-+	x7_fb = (volatile uint32_t *)((uint8_t *)p +
-+		(size_t)var.yoffset * fix.line_length + (size_t)var.xoffset * 2);
++	fb_base = p;
++	fb_line = fix.line_length;
++	fb_var_cur = var;
++	fb_pages = (var.yres_virtual >= 2 * X7_FB_H &&
++		    fix.smem_len >= 2UL * X7_FB_H * fix.line_length) ? 2 : 1;
 +	video_restored = 0;
++	/* clear every page; draw into the hidden one (page 0 is shown) */
++	x7_fb = fb_page(0);
 +	x7_fb_clear_lines(0, X7_FB_H);
++	if (fb_pages == 2) {
++		x7_fb = fb_page(1);
++		x7_fb_clear_lines(0, X7_FB_H);
++	}
++	fb_back = fb_pages - 1;
++	x7_fb = fb_page(fb_back);
++	flip_pending = 0;
++	/* hardware scaling, when the system turned it on (x7game.cfg) */
++	if (access("/run/x7-hwscale", F_OK) == 0) {
++		scale_fd = open(SCALE_ATTR, O_WRONLY | O_CLOEXEC);
++		x7_fb_hwscale = scale_fd >= 0;
++	}
++	scale_now[0] = 0;
++	printf("x7: %s, %s\n", fb_pages == 2 ? "page flipping" : "one page",
++	       x7_fb_hwscale ? "hardware scaling" : "scaling on the CPU");
 +	return 0;
 +
 +fail:
@@ -2153,10 +2271,21 @@ index 0000000..e6be674
 +		return;
 +	video_restored = 1;
 +
++	/* the text console needs the 1:1 picture back */
++	if (scale_fd >= 0) {
++		ssize_t r = write(scale_fd, "off", 3);
++
++		(void)r;
++		close(scale_fd);
++		scale_fd = -1;
++		x7_fb_hwscale = 0;
++	}
 +	if (x7_fb) {
 +		x7_fb_clear_lines(0, X7_FB_H);
 +		x7_fb = NULL;
 +	}
++	/* fb_var_orig is one page shown from the top (yres_virtual 480,
++	 * yoffset 0) at the console's depth */
 +	if (fb_fd >= 0) {
 +		if (fb_var_saved) {
 +			struct fb_var_screeninfo var = fb_var_orig;
@@ -2191,6 +2320,62 @@ index 0000000..e6be674
 +	}
 +}
 +
++void x7_begin_frame(void)
++{
++	uint32_t crtc = 0;
++
++	if (flip_pending && fb_fd >= 0) {
++		ioctl(fb_fd, FBIO_WAITFORVSYNC, &crtc);
++		flip_pending = 0;
++	}
++}
++
++void x7_present(void)
++{
++	if (fb_pages < 2 || fb_fd < 0 || !x7_fb)
++		return;
++	fb_var_cur.xoffset = 0;
++	fb_var_cur.yoffset = fb_back * X7_FB_H;
++	fb_var_cur.activate = FB_ACTIVATE_NOW;
++	if (ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var_cur) < 0) {
++		/* refused: draw on the page that is shown from now on */
++		perror("x7: FBIOPAN_DISPLAY");
++		fb_pages = 1;
++		fb_back ^= 1;
++		x7_fb = fb_page(fb_back);
++		return;
++	}
++	fb_back ^= 1;
++	x7_fb = fb_page(fb_back);
++	flip_pending = 1;
++}
++
++int x7_scale(int w, int h, int out_w, int out_h, int sharp)
++{
++	char s[48];
++	int n;
++
++	if (scale_fd < 0)
++		return -1;
++	if (w)
++		n = snprintf(s, sizeof(s), "%d %d %d %d %s", w, h, out_w, out_h,
++			     sharp ? "sharp" : "smooth");
++	else
++		n = snprintf(s, sizeof(s), "off");
++	if (!strcmp(s, scale_now))
++		return 0;
++	if (pwrite(scale_fd, s, n, 0) < 0) {
++		fprintf(stderr, "x7: hardware scaling refused (%s): scaling on the CPU\n", s);
++		close(scale_fd);
++		scale_fd = -1;
++		x7_fb_hwscale = 0;
++		scale_now[0] = 0;
++		return -1;
++	}
++	strcpy(scale_now, s);
++	return 0;
++}
++
 +void x7_present_canvas_2x(const uint16_t *canvas)
 +{
 +	uint32_t line[X7_FB_W / 2];
@@ -2198,6 +2383,27 @@ index 0000000..e6be674
 +
 +	if (!x7_fb)
 +		return;
++	x7_begin_frame();
++	/* the display hardware doubles it: write it 1:1 */
++	if (x7_fb_hwscale && x7_scale(X7_FB_W / 2, X7_FB_H / 2, X7_FB_W, X7_FB_H, 1) == 0) {
++		for (y = 0; y < X7_FB_H / 2; y++) {
++			const uint16_t *s = canvas + y * (X7_FB_W / 2);
++			uint16_t *l16 = (uint16_t *)line;
++
++			if (x7_fb_bgr) {
++				for (x = 0; x < X7_FB_W / 2; x++) {
++					uint32_t c = s[x];
++					l16[x] = ((c & 0x1f) << 11) | (c & 0x7e0) | (c >> 11);
++				}
++			} else {
++				memcpy(l16, s, X7_FB_W);
++			}
++			x7_fb_write_words(y, line, X7_FB_W / 4);
++		}
++		x7_present();
++		return;
++	}
++	x7_scale(0, 0, 0, 0, 0);
 +	for (y = 0; y < X7_FB_H / 2; y++) {
 +		const uint16_t *s = canvas + y * (X7_FB_W / 2);
 +		if (x7_fb_bgr) {
@@ -2215,6 +2421,7 @@ index 0000000..e6be674
 +		x7_fb_write_line(2 * y, line);
 +		x7_fb_write_line(2 * y + 1, line);
 +	}
++	x7_present();
 +}
 +
 +void x7_fb_text(int x, int y, const char *text)
@@ -2581,10 +2788,10 @@ index 0000000..e6be674
 +}
 diff --git a/src/port/r36sx/x7_hw.h b/src/port/r36sx/x7_hw.h
 new file mode 100644
-index 0000000..643979f
+index 0000000..3bc1e72
 --- /dev/null
 +++ b/src/port/r36sx/x7_hw.h
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,131 @@
 +#ifndef X7_HW_H
 +#define X7_HW_H
 +
@@ -2628,8 +2835,32 @@ index 0000000..643979f
 +	}
 +}
 +
++/* Writes n words (2n pixels) to line y from column 0 (a frame the display
++ * hardware enlarges, see x7_scale). */
++static inline void x7_fb_write_words(int y, const uint32_t *src, int n)
++{
++	volatile uint32_t *d = x7_fb + (unsigned int)y * x7_fb_pitch32;
++	int i;
++	for (i = 0; i < n; i++)
++		d[i] = src[i];
++}
++
 +/* Fills screen lines y0..y1-1 with black. */
 +void x7_fb_clear_lines(int y0, int y1);
++
++/* Page flipping (X7 Game kernel patch 0020): with two pages, x7_fb points at
++ * the hidden one; x7_present() shows it at the next frame boundary and the
++ * other page becomes the drawing page. x7_begin_frame() waits, if needed,
++ * until the last flip took effect, so the page drawn next is not on the
++ * screen any more. Without page flipping both do nothing. */
++void x7_begin_frame(void);
++void x7_present(void);
++
++/* Hardware scaling (kernel patch 0019, when /run/x7-hwscale exists): the
++ * top-left w x h pixels of the page are shown enlarged in a centred
++ * out_w x out_h window; w = 0 turns it off. Returns 0 when done. */
++extern int x7_fb_hwscale;
++int x7_scale(int w, int h, int out_w, int out_h, int sharp);
 +
 +/* Shows a 320x240 RGB565 canvas doubled on the whole screen. */
 +void x7_present_canvas_2x(const uint16_t *canvas);
