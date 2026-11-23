@@ -30,6 +30,7 @@ that browses `X7DATA/roms` and starts each game in its emulator (see
 | Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER; every press and release is logged (`/run/x7-events.log`, kept to its newest 64-256 KiB). The emulators see them as one gamepad, "X7 Game Gamepad". The analog sticks are wired to the D-pad and face buttons |
 | Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console, 16-bit in games; the panel timing is the one the bootloader sets up |
 | Sound | ALSA sound card (speaker and headphone jack). `x7-soundtest` plays test tones |
+| Brightness | FN + VOL+ / VOL- (remembered across restarts). Optional idle dimming and screen-off in `x7game.cfg` (`dim_after_s`, `screen_off_after_s`, `dim_level`; off by default): any button brings the screen back |
 | Headphones | automatic switching: headphones in = speaker off, headphones out = speaker on, printed on every change. The speaker amplifier is also off while the volume is 0 |
 | DC port | charger plugged / unplugged printed; battery % printed whenever it goes up or down |
 | OTG port | connected / disconnected printed; a **root shell over USB serial** (PuTTY) |

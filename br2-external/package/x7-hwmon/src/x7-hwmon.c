@@ -16,7 +16,8 @@
  *   - the OTG port connected to / disconnected from a computer;
  *   - USB storage inserted / removed, with its size.
  * POWER pressed turns the console off, and so does a battery that stays at
- * or below battery_off_level (x7game.cfg). VOL+/VOL- change the volume.
+ * or below battery_off_level (x7game.cfg). VOL+/VOL- change the volume,
+ * FN + VOL+/VOL- the screen brightness (with optional idle dimming).
  * Started by hand from a terminal, it prints the lines there too.
  *
  *   x7-hwmon               monitor (what init runs)
@@ -384,6 +385,137 @@ static int headphones_now(void)
 	return -1;
 }
 
+/* ------------------------------------------------------------- backlight */
+
+/*
+ * FN + VOL+ / VOL- change the screen brightness; the level is saved on the
+ * SD card and set again at the next start. Optional idle dimming and
+ * screen-off (x7game.cfg, off by default): any button brings the level back.
+ * The backlight device (nzeus-ram's PWM) appears some 15-20 s after start,
+ * when S40x7ram has released the AVP memory; until then the bootloader's
+ * level stays.
+ */
+#define BACKLIGHT	"/sys/class/backlight/r36s-pwm/brightness"
+#define BL_SAVED	"/boot/x7game/brightness"
+#define BL_MIN		10	/* FN+VOL never goes darker than this (0 = dark) */
+#define BL_MAX		255
+#define BL_STEP		25	/* about 10 % */
+
+static int bl_level = -1;	/* the user's level; -1 = no backlight device yet */
+static int bl_now = -1;		/* what it is set to now (level, dimmed or 0) */
+static double bl_save_at;	/* save the level at this uptime; 0 = saved */
+static double idle_since;	/* uptime of the last button press */
+static int dim_after, off_after, dim_level;	/* seconds, seconds, 0..255 */
+static int fn_held;
+
+/* KEY in x7game.cfg as a number in [lo, hi], else def */
+static int conf_num(const char *key, int def, int lo, int hi)
+{
+	char value[32], *end;
+	long v;
+
+	if (conf_get(key, value, sizeof(value)) || !value[0])
+		return def;
+	v = strtol(value, &end, 10);
+	return *end || v < lo || v > hi ? def : (int)v;
+}
+
+static void bl_write(int v)
+{
+	FILE *f;
+
+	if (v == bl_now)
+		return;
+	f = fopen(BACKLIGHT, "we");
+	if (!f)
+		return;
+	fprintf(f, "%d\n", v);
+	if (fclose(f) == 0)
+		bl_now = v;
+}
+
+static void bl_save(void)
+{
+	FILE *f = fopen(BL_SAVED, "we");
+
+	bl_save_at = 0;
+	if (f) {
+		fprintf(f, "%d\n", bl_level);
+		fclose(f);
+	}
+}
+
+static int bl_percent(int v)
+{
+	return (v * 100 + BL_MAX / 2) / BL_MAX;
+}
+
+/* once the device is there: the saved level, else the bootloader's */
+static void backlight_init(void)
+{
+	char buf[32];
+	int v = -1;
+
+	if (access(BACKLIGHT, W_OK))
+		return;
+	dim_after = conf_num("dim_after_s", 0, 0, 86400);
+	off_after = conf_num("screen_off_after_s", 0, 0, 86400);
+	dim_level = conf_num("dim_level", 20, 0, BL_MAX);
+	if (!read_file(BL_SAVED, buf, sizeof(buf)))
+		v = atoi(buf);
+	if (v < BL_MIN || v > BL_MAX) {
+		v = read_file(BACKLIGHT, buf, sizeof(buf)) ? -1 : atoi(buf);
+		if (v < BL_MIN || v > BL_MAX)
+			v = 153;	/* the bootloader's level */
+	}
+	bl_level = v;
+	bl_now = -1;
+	bl_write(bl_level);
+	say(C_SYS, "Backlight: %d%% (FN + VOL+/VOL- to change)", bl_percent(bl_level));
+}
+
+static void brightness_step(int up)
+{
+	if (bl_level < 0) {
+		say(C_BTN, "FN+VOL%c: no brightness control yet (it starts some 20 s after power-on)",
+		    up ? '+' : '-');
+		return;
+	}
+	bl_level += up ? BL_STEP : -BL_STEP;
+	if (bl_level > BL_MAX)
+		bl_level = BL_MAX;
+	if (bl_level < BL_MIN)
+		bl_level = BL_MIN;
+	bl_write(bl_level);
+	bl_save_at = uptime() + 3;	/* one SD card write per adjustment */
+	say(C_BTN, "FN+VOL%c  (brightness %d%%)", up ? '+' : '-', bl_percent(bl_level));
+}
+
+/* a button was pressed: the idle timers start again, a dimmed or dark
+ * screen comes back */
+static void activity(void)
+{
+	idle_since = uptime();
+	if (bl_level >= 0 && bl_now != bl_level)
+		bl_write(bl_level);
+}
+
+static void backlight_tick(double now)
+{
+	double idle = now - idle_since;
+
+	if (bl_level < 0) {
+		backlight_init();
+		return;
+	}
+	if (bl_save_at && now >= bl_save_at)
+		bl_save();
+	if (off_after && idle >= off_after)
+		bl_write(0);
+	else if (dim_after && idle >= dim_after)
+		bl_write(dim_level < bl_level ? dim_level : bl_level);
+}
+
 /* ---------------------------------------------------------- power off */
 
 static int powering_off;
@@ -395,6 +527,8 @@ static void power_off(const char *why)
 	if (powering_off)
 		return;
 	powering_off = 1;
+	if (bl_save_at)
+		bl_save();		/* a level changed just before */
 	say(C_POWER, "%s: turning off. Goodbye!", why);
 	run_detached(argv);
 }
@@ -410,6 +544,10 @@ static void handle_event(const struct input *in, const struct input_event *ev)
 	if (ev->type != EV_KEY || ev->value == 2)	/* 2 = auto-repeat */
 		return;
 	name = key_name(ev->code);
+	if (ev->value == 1)
+		activity();
+	if (ev->code == BTN_MODE)
+		fn_held = ev->value != 0;
 	if (ev->code == KEY_POWER) {
 		/* Only a press seen while running counts: if the button is still
 		 * held from switching on, the first event is its release. */
@@ -420,7 +558,9 @@ static void handle_event(const struct input *in, const struct input_event *ev)
 		return;
 	}
 	if (ev->code == KEY_VOLUMEUP || ev->code == KEY_VOLUMEDOWN) {
-		if (ev->value == 1) {
+		if (ev->value == 1 && fn_held) {
+			brightness_step(ev->code == KEY_VOLUMEUP);
+		} else if (ev->value == 1) {
 			volume_step(ev->code == KEY_VOLUMEUP);
 			if (volume >= 0)
 				say(C_BTN, "%s pressed  (volume %d%%)", name, (volume * 100 + 127) / 255);
@@ -815,6 +955,12 @@ static void status_lines(int at_boot)
 	volume = volume_read();
 	if (volume >= 0)
 		say(C_AUDIO, "Volume: %d%%", (volume * 100 + 127) / 255);
+	{
+		char buf[32];
+
+		if (!read_file(BACKLIGHT, buf, sizeof(buf)))
+			say(C_SYS, "Backlight: %d%%", bl_percent(atoi(buf)));
+	}
 }
 
 /* ------------------------------------------------------------------ main */
@@ -857,6 +1003,7 @@ int main(int argc, char **argv)
 	if (ino >= 0)
 		inotify_add_watch(ino, "/dev/input", IN_CREATE);
 	/* status_lines() did the first round: the ticks start from now on */
+	idle_since = uptime();
 	next_fast = uptime() + 0.5;
 	next_battery = next_fast + 0.5;
 	for (;;) {
@@ -911,6 +1058,7 @@ int main(int argc, char **argv)
 			dc_tick(0);
 			otg_tick(0);
 			cards_tick(0);
+			backlight_tick(now);
 		}
 		if (now >= next_battery) {	/* every second */
 			next_battery += 1.0;
