@@ -34,11 +34,13 @@ define PCSX4ALL_EXTRACT_LIBCHDR
 endef
 PCSX4ALL_POST_EXTRACT_HOOKS += PCSX4ALL_EXTRACT_LIBCHDR
 
-# Makefile.r36sx sets its own CFLAGS (MIPS32r2, -mtune=74kc, -O2, the GCC 14
-# relaxations); only the cross compilers come from here
+# Makefile.r36sx sets its own CFLAGS (MIPS32r2, -mtune=74kc, the GCC 14
+# relaxations); only the cross compilers and the optimisation come from
+# here: -O3 (the SF3000 build of the same emulator uses -Ofast); the GPU
+# renderer and the GTE gain most from it
 define PCSX4ALL_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) -f Makefile.r36sx \
-		CC="$(TARGET_CC)" CXX="$(TARGET_CXX)"
+		CC="$(TARGET_CC)" CXX="$(TARGET_CXX)" OPT="-O3"
 endef
 
 define PCSX4ALL_INSTALL_TARGET_CMDS

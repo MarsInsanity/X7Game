@@ -1179,7 +1179,7 @@ index 0000000..ec305b2
 +
 +	Config.ShowFps=0;    // 0=don't show FPS
 +	Config.FrameLimit = true;
-+	Config.FrameSkip = FRAMESKIP_OFF;
++	Config.FrameSkip = FRAMESKIP_AUTO;	// skips only when the game falls behind
 +
 +	// The whole 640x480 picture is drawn: no pixel skipping in gpu_unai
 +	Config.VideoScaling = 0;

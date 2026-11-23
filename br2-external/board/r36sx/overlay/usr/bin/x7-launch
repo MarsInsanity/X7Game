@@ -91,6 +91,10 @@ pcsx4all)
 	# with an empty one no button works, not even quit.
 	DEF=/usr/share/x7game/retroarch.cfg
 	CFG=$RA/retroarch.cfg
+	# X7 Game's starting core options (automatic frameskip for the heavier
+	# systems), copied once; RetroArch keeps each core's own after that
+	test -s "$RA/retroarch-core-options.cfg" ||
+		cp /usr/share/x7game/retroarch-core-options.cfg "$RA/retroarch-core-options.cfg" 2>> "$LOG"
 	# X7 Game's defaults have a version number. When an update changes them
 	# (buttons, audio...), the user's copy is kept as retroarch.cfg.old and
 	# the new defaults are copied below (RetroArch drops comments when it
