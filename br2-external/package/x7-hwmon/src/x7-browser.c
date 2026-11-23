@@ -879,6 +879,66 @@ static void info(void)
 		free_line(label[i]);
 }
 
+/*
+ * X7DATA was not closed cleanly (S05x7data leaves /run/x7-data.dirty): ask
+ * before showing any games whether to check and repair it. The real
+ * frontend will ask the same.
+ */
+static void repair_prompt(void)
+{
+	static const char *const text[] = {
+		"X7DATA (your games and saves) was not closed cleanly last time,",
+		"for example because the battery ran out or the console hung.",
+		"It may be damaged, and games may then fail to save.",
+		"",
+		"Check and repair it now? It takes about a minute on a big card.",
+		"",
+		"  A   check and repair (recommended)",
+		"  B   not now (you will be asked again at the next start)",
+	};
+	char *label[8];
+	const char *attr[8];
+	pid_t pid;
+	int i, k, status = 0;
+
+	if (access("/run/x7-data.dirty", F_OK))
+		return;
+	for (i = 0; i < 8; i++) {
+		label[i] = (char *)text[i];
+		attr[i] = C_TEXT;
+	}
+	do {
+		draw("X7DATA check", "", label, attr, 8, -1, 0, " A repair   B not now");
+		k = get_key(-1);
+	} while (k != K_A && k != K_B);
+	if (k == K_B)
+		return;
+
+	/* let x7-datarepair print on the console as it goes */
+	put("\033[0m\033[2J\033[H\033[?7h");
+	flush_out();
+	pid = fork();
+	if (pid == 0) {
+		signal(SIGPIPE, SIG_DFL);
+		signal(SIGINT, SIG_DFL);
+		signal(SIGQUIT, SIG_DFL);
+		execl("/usr/sbin/x7-datarepair", "x7-datarepair", (char *)NULL);
+		_exit(127);
+	}
+	if (pid > 0)
+		while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+			;
+	put("\nPress A to continue.\n");
+	flush_out();
+	/* buttons pressed during the check are stale */
+	open_inputs(1000);
+	while (get_key(-1) != K_A)
+		;
+	screen_setup();
+	if (pid < 0 || !WIFEXITED(status) || WEXITSTATUS(status) >= 2)
+		snprintf(msg, sizeof(msg), "X7DATA still has problems: check the card on a PC.");
+}
+
 int main(void)
 {
 	char *label[MAX_SYSTEMS + 1], buf[MAX_SYSTEMS][128];
@@ -891,6 +951,7 @@ int main(void)
 	signal(SIGQUIT, SIG_IGN);
 	screen_setup();
 	open_inputs(3000);
+	repair_prompt();
 	load_systems();
 	n = nsys + 1;
 

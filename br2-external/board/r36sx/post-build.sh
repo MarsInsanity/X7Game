@@ -7,7 +7,7 @@ mkdir -p "$TARGET/boot" "$TARGET/root" "$TARGET/share" "$TARGET/usr/share/x7game
 # the legacy uImage magic, for x7-update (plain or V2.7-wrapped boot files)
 printf '\047\005\031\126' > "$TARGET/usr/share/x7game/uimage-magic"
 chmod 0755 "$TARGET"/etc/init.d/S*x7* "$TARGET"/usr/bin/x7-* \
-	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/sbin/x7-update" "$TARGET/usr/libexec/x7-usb-shell"
+	"$TARGET/usr/sbin/x7-usb-gadget" "$TARGET/usr/sbin/x7-report" "$TARGET/usr/sbin/x7-update" "$TARGET/usr/sbin/x7-datarepair" "$TARGET/usr/libexec/x7-usb-shell"
 
 # Start scripts with nothing to do: there is no /etc/sysctl.conf or
 # /etc/sysctl.d (S02sysctl would still run find, xargs and logger at every
@@ -21,6 +21,11 @@ rm -f "$TARGET/etc/init.d/S02sysctl" "$TARGET/etc/init.d/S11modules"
 # server. alsa.conf, cards/ and pcm/ in /usr/share/alsa must stay.
 rm -rf "$TARGET/usr/share/sounds/alsa" "$TARGET/usr/share/alsa/speaker-test"
 rm -f "$TARGET/usr/bin/aserver"
+
+# exfatprogs: only mkfs.exfat (S05x7data) and fsck.exfat (x7-datarepair) are
+# used; the other tools are for PCs and the shell.
+rm -f "$TARGET"/usr/sbin/tune.exfat "$TARGET"/usr/sbin/exfatlabel \
+	"$TARGET"/usr/sbin/dump.exfat "$TARGET"/usr/sbin/exfat2img
 
 cat > "$TARGET/etc/x7game-release" <<EOF
 X7_VERSION=${X7_VERSION:-dev}

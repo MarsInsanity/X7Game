@@ -1,0 +1,33 @@
+#!/bin/sh
+# X7 Game: compressed swap in RAM (zram). When a big game needs more memory
+# than the console has, the kernel compresses memory nobody is using instead
+# of stopping the game. It costs almost nothing until memory runs short and
+# never writes to the SD card. Size: zram_mb in x7game.cfg, 32-128 (MiB of
+# uncompressed data it can hold), 0 = off. Set up in the background once
+# S40x7ram has given Linux the AVP memory.
+test "$1" = start || exit 0
+test -f /run/x7game.conf && . /run/x7game.conf
+mb=${zram_mb:-32}
+case "$mb" in *[!0-9]*|'') mb=32 ;; esac
+test "$mb" -eq 0 && exit 0
+test "$mb" -lt 32 && mb=32
+test "$mb" -gt 128 && mb=128
+test -e /sys/block/zram0/disksize || exit 0
+(
+	# wait while the RAM release is still under way (up to 40 s)
+	n=0
+	while test $n -lt 40; do
+		s=
+		test -f /run/x7-ram.state && read -r s < /run/x7-ram.state
+		test "$s" = pending || break
+		sleep 1
+		n=$((n + 1))
+	done
+	if echo $((mb * 1024 * 1024)) > /sys/block/zram0/disksize &&
+		mkswap /dev/zram0 && swapon /dev/zram0; then
+		echo "<5>x7game: zram swap on ($mb MiB)" > /dev/kmsg
+	else
+		echo "<4>x7game: zram swap could not be set up" > /dev/kmsg
+	fi
+) > /dev/null 2>&1 &
+exit 0

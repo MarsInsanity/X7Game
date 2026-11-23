@@ -93,3 +93,8 @@ CONFIG_BLK_DEV_LOOP_MIN_COUNT=0
 # "r36s-avp" backlight that could never work was registered next to the real
 # one. The backlight is "r36s-pwm" from nzeus-ram.
 # CONFIG_NZEUS_AVP_RPC is not set
+
+# A kernel oops stops only the program that hit it (the game list comes back
+# and the oops text reaches the logs) instead of freezing the whole console.
+# A real panic still stops the console (panic=0 on the command line).
+# CONFIG_PANIC_ON_OOPS is not set

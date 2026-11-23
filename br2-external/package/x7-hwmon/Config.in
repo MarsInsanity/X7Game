@@ -23,10 +23,7 @@ config BR2_PACKAGE_X7_HWMON
 
 	  x7-datapart: writes the data partition's (X7DATA) entry in
 	  the SD card's partition table at the first start
-	  (S05x7data).
-
-	  x7-tf2-probe: a read-only research tool to find TF2's
-	  card-detect wiring.
+	  (S05x7data), and reports whether X7DATA was closed cleanly.
 
 comment "x7-hwmon needs a toolchain w/ threads"
 	depends on BR2_USE_MMU

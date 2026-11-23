@@ -14,8 +14,7 @@
  *   - the DC port (charger) plugged / unplugged, and the battery percentage
  *     whenever it goes up or down;
  *   - the OTG port connected to / disconnected from a computer;
- *   - a second card the kernel sees (USB storage; the kernel does not find
- *     TF2 yet) inserted / removed, with its size.
+ *   - USB storage inserted / removed, with its size.
  * POWER pressed turns the console off, and so does a battery that stays at
  * or below battery_off_level (x7game.cfg). VOL+/VOL- change the volume.
  * Started by hand from a terminal, it prints the lines there too.
@@ -23,7 +22,6 @@
  *   x7-hwmon               monitor (what init runs)
  *   x7-hwmon --status      print the state to stdout once and exit (used by
  *                          x7-status, x7-console and the game list)
- *   x7-hwmon --colortest   draw colour gradients on the screen for 8 s
  */
 #define _GNU_SOURCE
 #include <ctype.h>
@@ -31,7 +29,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
-#include <linux/fb.h>
 #include <linux/input.h>
 #include <poll.h>
 #include <signal.h>
@@ -42,7 +39,6 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -663,7 +659,7 @@ static void otg_tick(int initial)
 	}
 }
 
-/* ------------------------------------------- extra cards (TF2, USB storage) */
+/* -------------------------------------- extra cards (USB storage, SD 2) */
 
 #define MAX_CARDS 8
 static char cards[MAX_CARDS][32];
@@ -680,7 +676,7 @@ static void card_report(const char *name, int inserted)
 {
 	char path[128], size[32];
 	unsigned long long sectors;
-	const char *slot = name[0] == 's' ? "USB storage" : "TF2";
+	const char *slot = name[0] == 's' ? "USB storage" : "SD card 2";
 
 	if (!inserted) {
 		say(C_CARDS, "%s: card REMOVED (%s)", slot, name);
@@ -695,16 +691,14 @@ static void card_report(const char *name, int inserted)
 static void cards_tick(int initial)
 {
 	char now[MAX_CARDS][32];
-	int n = 0, i, j, tf2 = 0;
+	int n = 0, i, j;
 	DIR *d = opendir("/sys/block");
 	struct dirent *e;
 
 	if (d) {
 		while ((e = readdir(d)) && n < MAX_CARDS)
-			if (is_extra_card(e->d_name)) {
-				tf2 |= e->d_name[0] == 'm';	/* mmcblk1 and up */
+			if (is_extra_card(e->d_name))
 				snprintf(now[n++], sizeof(now[0]), "%.31s", e->d_name);
-			}
 		closedir(d);
 	}
 	for (i = 0; i < n; i++) {		/* new cards */
@@ -721,10 +715,6 @@ static void cards_tick(int initial)
 		if (i == n)
 			card_report(cards[j], 0);
 	}
-	/* the kernel has never seen the TF2 slot (one SD controller, see
-	 * docs/HARDWARE.md): don't claim it is empty */
-	if (initial && !tf2)
-		say(C_CARDS, "TF2: not supported yet");
 	memcpy(cards, now, sizeof(now));
 	ncards = n;
 }
@@ -827,71 +817,6 @@ static void status_lines(int at_boot)
 		say(C_AUDIO, "Volume: %d%%", (volume * 100 + 127) / 255);
 }
 
-/* ------------------------------------------------------------ colour test */
-
-static int colortest(void)
-{
-	struct fb_var_screeninfo v;
-	struct fb_fix_screeninfo f;
-	uint8_t *fb, *saved;
-	size_t size;
-	int fd = open("/dev/fb0", O_RDWR | O_CLOEXEC);
-	unsigned int x, y;
-
-	if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &v) || ioctl(fd, FBIOGET_FSCREENINFO, &f)) {
-		perror("/dev/fb0");
-		return 1;
-	}
-	if (v.bits_per_pixel != 32) {
-		fprintf(stderr, "colour test needs 32-bit mode (now %u)\n", v.bits_per_pixel);
-		return 1;
-	}
-	size = (size_t)f.line_length * v.yres;
-	fb = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (fb == MAP_FAILED) {
-		perror("mmap");
-		return 1;
-	}
-	saved = malloc(size);
-	if (saved)
-		memcpy(saved, fb, size);
-	for (y = 0; y < v.yres; y++) {
-		uint32_t *row = (uint32_t *)(fb + (size_t)y * f.line_length);
-		unsigned int band = y * 6 / v.yres;
-
-		for (x = 0; x < v.xres; x++) {
-			unsigned int t = x * 255 / (v.xres - 1), r = 0, g = 0, b = 0;
-			unsigned int h = x * 1530 / v.xres, s = h % 255;
-
-			switch (band) {
-			case 0: r = t; break;			/* red ramp */
-			case 1: g = t; break;			/* green ramp */
-			case 2: b = t; break;			/* blue ramp */
-			case 3: r = g = b = t; break;		/* grey ramp */
-			default:				/* all hues */
-				switch (h / 255) {
-				case 0: r = 255; g = s; break;
-				case 1: r = 255 - s; g = 255; break;
-				case 2: g = 255; b = s; break;
-				case 3: g = 255 - s; b = 255; break;
-				case 4: r = s; b = 255; break;
-				default: r = 255; b = 255 - s; break;
-				}
-				if (band == 5) {		/* hues, darker */
-					r /= 2; g /= 2; b /= 2;
-				}
-			}
-			row[x] = 0xff000000u | (r << v.red.offset) | (g << v.green.offset) |
-				 (b << v.blue.offset);
-		}
-	}
-	printf("colour test: red, green, blue and grey ramps, then every hue (8 s)\n");
-	sleep(8);
-	if (saved)
-		memcpy(fb, saved, size);
-	return 0;
-}
-
 /* ------------------------------------------------------------------ main */
 
 int main(int argc, char **argv)
@@ -900,8 +825,6 @@ int main(int argc, char **argv)
 	double next_battery, next_fast;
 	struct sigaction sa = { .sa_handler = SIG_IGN, .sa_flags = SA_NOCLDWAIT };
 
-	if (argc > 1 && !strcmp(argv[1], "--colortest"))
-		return colortest();
 	sigaction(SIGCHLD, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	setvbuf(stdout, NULL, _IOLBF, 0);

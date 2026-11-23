@@ -50,7 +50,9 @@ BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/post-image
 # Deck runs, plus NZEUS Deck's R36S drivers and the X7 Game changes ---
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
-BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/SiarheiVolkau/linux-hichip/archive/da5f1a22ef2ff5c46aa3f750fa10825813970b09.tar.gz"
+# from X7 Game's fork of linux-hichip (the commit is tagged there as
+# x7game-base-da5f1a22, so it stays available if the original branch moves)
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/MarsInsanity/linux-hichip/archive/da5f1a22ef2ff5c46aa3f750fa10825813970b09.tar.gz"
 BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/patches/linux"
 BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
 BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/linux.config"
@@ -63,14 +65,15 @@ BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X7GAME_PATH)/board/r36sx/busybox.fragment"
 BR2_PACKAGE_ALSA_UTILS=y
 BR2_PACKAGE_ALSA_UTILS_AMIXER=y
-BR2_PACKAGE_ALSA_UTILS_APLAY=y
 BR2_PACKAGE_ALSA_UTILS_SPEAKER_TEST=y
+# shell-only tools nothing in X7 Game uses
+# BR2_PACKAGE_ALSA_UTILS_ALSACTL is not set
+# BR2_PACKAGE_ALSA_UTILS_ALSAMIXER is not set
 # libatopology is only for alsatplg (not built)
 # BR2_PACKAGE_ALSA_LIB_TOPOLOGY is not set
 # the data partition (X7DATA): exFAT by default, FAT32 on request
 BR2_PACKAGE_EXFATPROGS=y
 BR2_PACKAGE_DOSFSTOOLS=y
-BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
 BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
 BR2_PACKAGE_X7_HWMON=y
 # emulation: slim RetroArch (x7fb video, udev input through libudev-zero,

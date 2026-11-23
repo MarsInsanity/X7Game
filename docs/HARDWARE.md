@@ -79,7 +79,8 @@ What X7 Game relies on, and where each fact comes from. "NZEUS" = NZEUS Deck
 - Not found in software: one DesignWare SD controller (0x1884c000, pins
   T00-T05), no second controller, no USB card reader; `num-slots = <2>` in
   the stock DT stopped the stock kernel booting (TreeFrogUI
-  `docs/dev/sd2-investigation.md`, ShallotsOS). Next step: `x7-tf2-probe`.
+  `docs/dev/sd2-investigation.md`, ShallotsOS). X7 Game has given up on
+  TF2 and uses TF1 only.
 
 ## No RTC
 

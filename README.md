@@ -28,13 +28,15 @@ that browses `X7DATA/roms` and starts each game in its emulator (see
 | Screen | the boot log, then the test game list (`x7-browser`); its **System information** page shows the hardware state and the latest hardware events |
 | Games | RetroArch (a slim build made for this console) with libretro cores for the 8/16-bit and handheld systems, Game Boy Advance and arcade; PCSX4All (with an X7 Game port) for the PlayStation |
 | Buttons | D-pad, A, B, X, Y, L1, L2, R1, R2, SELECT, START, FN, VOL+, VOL-, POWER; every press and release is logged (`/run/x7-events.log`, kept to its newest 64-256 KiB). The emulators see them as one gamepad, "X7 Game Gamepad". The analog sticks are wired to the D-pad and face buttons |
-| Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console; the panel timing is the one the bootloader sets up. `x7-colortest` shows colour ramps |
+| Display | 640x480, 32-bit colour (16.7 million colours) framebuffer console, 16-bit in games; the panel timing is the one the bootloader sets up |
 | Sound | ALSA sound card (speaker and headphone jack). `x7-soundtest` plays test tones |
 | Headphones | automatic switching: headphones in = speaker off, headphones out = speaker on, printed on every change. The speaker amplifier is also off while the volume is 0 |
 | DC port | charger plugged / unplugged printed; battery % printed whenever it goes up or down |
 | OTG port | connected / disconnected printed; a **root shell over USB serial** (PuTTY) |
 | Power | POWER pressed = clean power-off; at power-on the console switches straight off again if the battery is at or below the cutoff and no charger is plugged in |
-| TF2 | not supported yet: the kernel never sees the second card slot (see [Known limits](#known-limits)) |
+| Crashes | a kernel driver bug (an "oops") stops only the program that hit it: the game list comes back and the details reach the logs |
+| TF2 | not supported: the R36SX's second card slot can't be used (see [Known limits](#known-limits)) |
+| Memory | about 114 MiB for programs, plus compressed memory (zram, 32 MiB by default, `zram_mb` in `x7game.cfg`, 32-128 or 0 = off) so big games aren't stopped when memory runs short |
 
 ## Supported consoles
 
@@ -59,9 +61,11 @@ into the data partition (see below).
 On a PC the card then shows two drives:
 
 - **X7GAME** (48 MB): the boot files. `x7game/x7game.cfg` holds the settings
-  (battery cutoffs, headphone polarity, start volume, data partition file
-  system): one `KEY=VALUE` per line, text after `#` is ignored, and a line
-  with an empty value keeps the default. Lines the console can't use are
+  (battery cutoffs, headphone polarity, start volume, update battery level,
+  zram size). They are all commented out, so X7 Game's defaults apply and
+  follow updates; remove the `#` in front of one to change it. One
+  `KEY=VALUE` per line, text after `#` is ignored, and a line with an empty
+  value keeps the default. Lines the console can't use are
   listed in `boot.log`. `x7game/logs/` holds the logs of the last start
   (`boot.log`) and of the last session (`last-session.log`, written when you
   switch off with POWER).
@@ -78,9 +82,12 @@ On a PC the card then shows two drives:
 | `music/`, `videos/`, `photos/` | media |
 | `overlays/`, `shaders/`, `system/`, `userscripts/` | for the frontend and emulators (later) |
 
-- It is exFAT (no 4 GB file limit; Windows, macOS and Linux read it). Set
-  `data_filesystem=fat32` in `x7game.cfg` **before the first start** for
-  FAT32 instead.
+- It is exFAT (no 4 GB file limit; Windows, macOS and Linux read it). A
+  FAT32 X7DATA made on a PC (or by older versions) works too.
+- If X7DATA wasn't closed cleanly (the battery ran out, the console hung),
+  the console asks at the next start, before the game list, whether to check
+  and repair it (A = repair, B = not now; you're asked again next time).
+  Over the USB shell: `x7-datarepair`.
 - On the console it is mounted at `/share`.
 - Missing folders are created again at every start; nothing in it is ever
   deleted.
@@ -225,8 +232,7 @@ x7-console                   the hardware state, then every hardware event, live
 x7-launch fceumm FILE        start a game (emulator name from systems.txt;
                              refused while another game runs)
 x7-soundtest                 test tones (speaker or headphones)
-x7-colortest                 colour ramps on the screen
-x7-tf2-probe                 read-only helper to find TF2's wiring
+x7-datarepair                check and repair X7DATA
 x7-update --status           running system slot and versions
 poweroff                     switch the console off
 ```
@@ -235,12 +241,10 @@ poweroff                     switch the console off
 
 - **Emulation is new:** RetroArch, the cores and PCSX4All have not been
   through much testing on the console yet.
-- **TF2:** no one has found the second card slot in software yet. The SoC has
-  one SD controller, the stock system never saw a second card, and it is not
-  a USB card reader ([TreeFrogUI's investigation](https://github.com/tzubertowski/TreeFrogUI/blob/main/docs/dev/sd2-investigation.md)).
-  X7 Game reports any second card the kernel sees, and `x7-tf2-probe` watches
-  every GPIO pin and the SD controller's card-detect lines while you insert
-  and remove a card, to find the slot's wiring.
+- **TF2:** the second card slot can't be used. The SoC has one SD
+  controller, the stock system never saw a second card, and it is not a USB
+  card reader ([TreeFrogUI's investigation](https://github.com/tzubertowski/TreeFrogUI/blob/main/docs/dev/sd2-investigation.md)).
+  X7 Game uses TF1 only.
 - **Headphone detection polarity** is not confirmed. If plugging and
   unplugging are reported the wrong way round, set
   `headphone_plugged_level=1` in `x7game/x7game.cfg`.
@@ -288,7 +292,7 @@ the commit its version tag points at: for a new build, use a new version.
 | `br2-external/board/r36sx/mkdisk.py`, `mkupdate.py`, `post-image.sh` | build the SD card image and the update file (card layout in `post-image.sh`) |
 | `br2-external/board/r36sx/overlay/` | the system's own files (init scripts, USB shell) |
 | `br2-external/board/r36sx/stock/` | the console's stock board files (see below) |
-| `br2-external/package/x7-hwmon/` | the console's hardware monitor, the virtual gamepad (`x7-padd`), the test game list (`x7-browser`), the TF2 probe and `x7-datapart` (data partition table entry) |
+| `br2-external/package/x7-hwmon/` | the console's hardware monitor, the virtual gamepad (`x7-padd`), the test game list (`x7-browser`) and `x7-datapart` (data partition table entry and clean-close check) |
 | `br2-external/package/retroarch/` | RetroArch: `Makefile.r36sx` (the slim build) and the `x7fb` video driver, as a patch |
 | `br2-external/package/libretro-*/` | the libretro cores |
 | `br2-external/package/libudev-zero/` | libudev without a udev daemon (RetroArch finds the gamepad with it) |
@@ -314,7 +318,9 @@ are under **GPL-2.0**, like the Linux kernel. X7 Game builds directly on:
   them.
 - **[linux-hichip](https://github.com/SiarheiVolkau/linux-hichip)** by
   Siarhei Volkau, GPL-2.0: the HiChip HC16xx Linux kernel (branch
-  `hc16xx-7.2`, commit `da5f1a22`).
+  `hc16xx-7.2`, commit `da5f1a22`). Builds download it from X7 Game's
+  [fork](https://github.com/MarsInsanity/linux-hichip), where that commit is
+  tagged `x7game-base-da5f1a22`.
 - **[Buildroot](https://buildroot.org/)**, GPL-2.0-or-later: the build
   system. Every package keeps its own licence (BusyBox GPL-2.0, glibc
   LGPL-2.1, alsa-lib LGPL-2.1, alsa-utils GPL-2.0, ...); a build writes them

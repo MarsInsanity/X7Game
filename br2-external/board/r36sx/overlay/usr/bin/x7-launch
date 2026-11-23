@@ -91,6 +91,20 @@ pcsx4all)
 	# with an empty one no button works, not even quit.
 	DEF=/usr/share/x7game/retroarch.cfg
 	CFG=$RA/retroarch.cfg
+	# X7 Game's defaults have a version number. When an update changes them
+	# (buttons, audio...), the user's copy is kept as retroarch.cfg.old and
+	# the new defaults are copied below (RetroArch drops comments when it
+	# saves, so the version lives in its own file).
+	defver=
+	userver=
+	read -r defver 2>/dev/null < /usr/share/x7game/retroarch-defaults.version
+	read -r userver 2>/dev/null < "$RA/defaults.version"
+	if test -n "$defver" && test "$defver" != "$userver"; then
+		if test -f "$CFG" && mv -f "$CFG" "$CFG.old" 2>> "$LOG"; then
+			echo "X7 Game: new RetroArch defaults (version $defver): the old settings are in $CFG.old" >> "$LOG"
+		fi
+		echo "$defver" > "$RA/defaults.version" 2>> "$LOG"
+	fi
 	if ! cfg_ok "$CFG"; then
 		echo "X7 Game: $CFG missing or damaged: copying the defaults" >> "$LOG"
 		cp "$DEF" "$CFG.new" 2>> "$LOG" && mv -f "$CFG.new" "$CFG" 2>> "$LOG"

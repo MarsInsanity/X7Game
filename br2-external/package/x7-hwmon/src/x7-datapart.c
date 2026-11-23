@@ -27,6 +27,8 @@
  *                              checks, or a damaged exFAT boot sector whose
  *                              backup is good - somebody's data all the same
  *   fs_sectors=                its size in 512-byte sectors
+ *   dirty=0|1                  1: the exFAT/FAT32 file system was not closed
+ *                              cleanly (power loss while it was mounted)
  * "write-entry" sets entry 2 = START_LBA .. the exact end of the card (mkfs
  * formats all of /dev/mmcblk0p4, and the file system must not be larger than
  * the partition PCs see), only if entry 1 is ok and entry 2 is empty or
@@ -143,6 +145,7 @@ struct card {
 	uint64_t entry2_sectors;
 	const char *fs;
 	uint64_t fs_sectors;
+	int dirty;
 };
 
 static int load(const char *dev, uint64_t start, struct card *c, int flags)
@@ -192,12 +195,15 @@ static int load(const char *dev, uint64_t start, struct card *c, int flags)
 	 */
 	c->fs = "none";
 	c->fs_sectors = 0;
+	c->dirty = 0;
 	if (c->data) {
 		int marker = b[510] == 0x55 && b[511] == 0xAA;
 
 		if (!memcmp(b + 3, "EXFAT   ", 8)) {
 			c->fs_sectors = exfat_sectors(b, c->data);
 			c->fs = c->fs_sectors ? "exfat" : "unknown";
+			/* VolumeFlags bit 1: VolumeDirty (set while mounted for writing) */
+			c->dirty = c->fs_sectors && ((b[106] | b[107] << 8) & 0x0002);
 		} else if (!memcmp(b + 3, "NTFS    ", 8)) {
 			/* not usable by X7 Game, but someone's data: never format it */
 			if (marker) {
@@ -214,6 +220,8 @@ static int load(const char *dev, uint64_t start, struct card *c, int flags)
 			    len > 0 && len <= c->data) {
 				c->fs = "fat32";
 				c->fs_sectors = len;
+				/* the boot sector's state byte: Linux sets bit 0 while mounted */
+				c->dirty = b[0x41] & 0x01;
 			} else {
 				c->fs = "unknown";
 			}
@@ -361,13 +369,14 @@ int main(int argc, char **argv)
 			return 1;
 		close(fd);
 		printf("card_sectors=%llu\nstart=%llu\ndata_sectors=%llu\ntoo_small=%d\n"
-		       "entry1=%s\nentry2=%s\nentry2_sectors=%llu\nfs=%s\nfs_sectors=%llu\n",
+		       "entry1=%s\nentry2=%s\nentry2_sectors=%llu\nfs=%s\nfs_sectors=%llu\n"
+		       "dirty=%d\n",
 		       (unsigned long long)c.sectors, (unsigned long long)start,
 		       (unsigned long long)c.data, c.data < MIN_DATA,
 		       c.entry1_ok ? "ok" : "bad",
 		       c.entry2 == 0 ? "absent" : c.entry2 == 1 ? "ours" : "other",
 		       (unsigned long long)c.entry2_sectors,
-		       c.fs, (unsigned long long)c.fs_sectors);
+		       c.fs, (unsigned long long)c.fs_sectors, c.dirty);
 		return 0;
 	}
 	if (!strcmp(argv[1], "fix-length"))

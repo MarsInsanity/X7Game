@@ -1,0 +1,46 @@
+#!/bin/sh
+# X7 Game: check and repair the data partition X7DATA. The game list runs it
+# when S05x7data found X7DATA not closed cleanly (/run/x7-data.dirty, which
+# holds the file system type) and the user chose to repair it. X7DATA is
+# unmounted while the check runs and mounted again afterwards.
+# Exit: 0 no problems, 1 problems repaired, 2 problems left, 3 could not run.
+PART=/dev/mmcblk0p4
+MNT=/share
+fs=
+test -f /run/x7-data.dirty && read -r fs < /run/x7-data.dirty
+if test -z "$fs"; then
+	# started by hand (USB shell): ask the card
+	fs=$(/usr/sbin/x7-datapart probe /dev/mmcblk0 2097152 2>/dev/null | sed -n 's/^fs=//p')
+fi
+case "$fs" in
+exfat|fat32) ;;
+*) echo "X7DATA has no exFAT/FAT32 file system X7 Game can check ($fs)."; exit 3 ;;
+esac
+
+sync
+if mountpoint -q "$MNT" && ! umount "$MNT"; then
+	echo "X7DATA is in use and can't be checked now."
+	exit 3
+fi
+echo "Checking X7DATA ($fs). This can take a minute on a big card..."
+case "$fs" in
+fat32)	fsck.fat -a -w "$PART" ;;
+*)	fsck.exfat -y "$PART" ;;
+esac
+rc=$?
+# fsck: 0 clean, 1 errors corrected, 2+ errors left or a failure
+case $rc in
+0) result=0; msg="no problems found" ;;
+1) result=1; msg="problems found and repaired" ;;
+*) result=2; msg="problems could not all be repaired (fsck exit $rc): check the card on a PC" ;;
+esac
+echo "<5>x7game: X7DATA check: $msg" > /dev/kmsg
+rm -f /run/x7-data.dirty
+/etc/init.d/S05x7data start > /dev/null 2>&1
+if mountpoint -q "$MNT"; then
+	echo "X7DATA: $msg."
+else
+	echo "X7DATA: $msg. It could not be mounted again."
+	test $result -lt 2 && result=2
+fi
+exit $result

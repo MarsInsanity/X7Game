@@ -4,8 +4,8 @@
 #
 # It covers the card from 1 GiB to the end (/dev/mmcblk0p4 through
 # blkdevparts=; partition 2 in the partition table for PCs). At the first
-# start it doesn't exist yet: it is formatted (exFAT, or FAT32 with
-# data_filesystem=fat32 in x7game.cfg) and added to the partition table.
+# start it doesn't exist yet: it is formatted (exFAT) and added to the
+# partition table. A FAT32 one made on a PC (or by older builds) still works.
 # A card that already has one - also after flashing a newer X7 Game image,
 # which rewrites only the first part of the card - keeps it: the file system
 # is adopted and only its partition table entry is restored. Never formats a
@@ -66,13 +66,8 @@ start)
 	note=
 	case "$fs" in
 	none)
-		if test "${data_filesystem:-exfat}" = fat32; then
-			say "first start: creating the data partition X7DATA (FAT32, $gib GiB)..."
-			mkfs.fat -F 32 -n X7DATA -h "$START" "$PART" > /dev/null 2>&1 && fs=fat32 && ptype=0c
-		else
-			say "first start: creating the data partition X7DATA (exFAT, $gib GiB)..."
-			mkfs.exfat -L X7DATA "$PART" > /dev/null 2>&1 && fs=exfat && ptype=07
-		fi
+		say "first start: creating the data partition X7DATA (exFAT, $gib GiB)..."
+		mkfs.exfat -L X7DATA "$PART" > /dev/null 2>&1 && fs=exfat && ptype=07
 		if test "$fs" = none; then
 			say "formatting the data partition failed"
 			exit 0
@@ -119,6 +114,14 @@ start)
 	if ! mountpoint -q "$MNT"; then
 		say "could not mount the data partition ($fs)$note"
 		exit 0
+	fi
+	# Not closed cleanly last time (power loss, a hang): the game list asks
+	# whether to check and repair it (x7-datarepair) before it shows games.
+	rm -f /run/x7-data.dirty
+	if test "$dirty" = 1 && test -z "$created"; then
+		echo "$fs" > /run/x7-data.dirty
+		echo "<4>x7game: X7DATA ($fs) was not closed cleanly" > /dev/kmsg
+		note="$note (not closed cleanly last time)"
 	fi
 	# the folder layout (RecalBox names); existing folders are left alone
 	while read -r d; do

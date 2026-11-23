@@ -1,4 +1,0 @@
-#!/bin/sh
-# X7 Game: red, green, blue and grey ramps plus every hue on the screen for
-# 8 s (shows the 32-bit, 16.7-million-colour mode).
-exec /usr/bin/x7-hwmon --colortest
