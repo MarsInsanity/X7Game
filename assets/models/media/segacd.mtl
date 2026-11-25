@@ -1,0 +1,79 @@
+# X7 Game model colours: every one an exact RGB565 colour
+newmtl c_080810
+Kd 0.031373 0.031373 0.062745
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_181418
+Kd 0.094118 0.078431 0.094118
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_212429
+Kd 0.129412 0.141176 0.160784
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_2961D6
+Kd 0.160784 0.380392 0.839216
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_4A4952
+Kd 0.290196 0.286275 0.321569
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_7B8694
+Kd 0.482353 0.525490 0.580392
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_848A94
+Kd 0.517647 0.541176 0.580392
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_B5BECE
+Kd 0.709804 0.745098 0.807843
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_CE1C21
+Kd 0.807843 0.109804 0.129412
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_D6DFE7
+Kd 0.839216 0.874510 0.905882
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_DEE7EF
+Kd 0.870588 0.905882 0.937255
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_EFC739
+Kd 0.937255 0.780392 0.223529
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_EFEFEF
+Kd 0.937255 0.937255 0.937255
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
