@@ -3,12 +3,12 @@
   "media": "../media/sega32x.obj",
   "view": [30, 28],
   "parts": {
-    "flap_f": {"hinge": {"pivot": [0, 9.7, -0.37], "axis": [1, 0, 0], "angle": -90}},
-    "flap_b": {"hinge": {"pivot": [0, 9.7, -2.63], "axis": [1, 0, 0], "angle": 90}}
+    "flap_f": {"hinge": {"pivot": [2.9, 12.3, -5.97], "axis": [1, 0, 0], "angle": -90}},
+    "flap_b": {"hinge": {"pivot": [2.9, 12.3, -8.23], "axis": [1, 0, 0], "angle": 90}}
   },
   "path": [
-    {"pos": [0, 19.0, -1.5], "rot": [0, 0, 0]},
-    {"pos": [0, 5.2, -1.5], "rot": [0, 0, 0]}
+    {"pos": [2.9, 21.6, -7.1], "rot": [0, 0, 0]},
+    {"pos": [2.9, 7.8, -7.1], "rot": [0, 0, 0]}
   ],
   "steps": [
     {"time": 0.3, "open": ["flap_f", "flap_b"]},

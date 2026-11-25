@@ -35,6 +35,12 @@ Ka 0 0 0
 Ks 0 0 0
 illum 1
 
+newmtl c_312C31
+Kd 0.192157 0.172549 0.192157
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
 newmtl c_42414A
 Kd 0.258824 0.254902 0.290196
 Ka 0 0 0
@@ -53,8 +59,20 @@ Ka 0 0 0
 Ks 0 0 0
 illum 1
 
+newmtl c_63616B
+Kd 0.388235 0.380392 0.419608
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
 newmtl c_9CA2A5
 Kd 0.611765 0.635294 0.647059
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+
+newmtl c_BD2429
+Kd 0.741176 0.141176 0.160784
 Ka 0 0 0
 Ks 0 0 0
 illum 1

@@ -10,7 +10,8 @@ media moves into the console, while lids, doors and trays open and close.
 - `systems/<id>.json`: how that system's media goes into its console (see below)
 - `src/<kind>_<id>.py`: the script that builds each model. Run it to rebuild
   the OBJ/MTL (`python assets/models/src/console_nes.py`). `console_segacd.py`
-  stacks the Genesis from `consoles/megadrive.obj` on top, so build that first
+  and `console_sega32x.py` add the Genesis from `consoles/megadrive.obj` (under
+  the 32X, on top of the Sega CD), so build that first
 - `previews/`: renders at the frontend's 320x240 in RGB565, doubled to 640x480:
   - `console_*` and `media_*`, one per model
   - `system_*`, a four-frame insertion strip per system
@@ -29,7 +30,8 @@ wswan, wswanc, atari2600, atari7800, lynx, psx, neogeo, arcade.
 - Flat colours. Each material `c_RRGGBB` is an exact RGB565 colour, and each
   model uses at most 14 of them.
 - Triangle limits: consoles and the arcade cabinet 600, handhelds 450, and
-  cartridges/media 250. Moving parts count towards the limit.
+  cartridges/media 250. Moving parts count towards the limit. The one
+  exception is `sega32x`, the 32X plugged into a Genesis: 850.
 - No text, logos or trademarks.
 - The shapes and proportions are taken from photos of the real hardware on
   Wikimedia Commons.

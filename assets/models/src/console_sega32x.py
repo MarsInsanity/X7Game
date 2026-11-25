@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sega 32X on its own: the black "mushroom" add-on standing on its
-cartridge-shaped stem. A wide, rounded cap (about 20.8 x 11.8 cm) whose
+"""Sega 32X plugged into a Genesis / Mega Drive, as it is always used: the
+black "mushroom" add-on standing in the Genesis cartridge slot. A wide, rounded cap (about 20.8 x 11.8 cm) whose
 glossy upper hood dips down in a wave at the front centre over a darker
 lower skirt; on top a raised island at the back with the cartridge slot
 (two spring dust flaps), a glossy black badge plate in front of it, vent
@@ -8,12 +8,20 @@ grilles at both side ends, A/V jacks at the back. Under the cap a dark neck
 block and the plug that goes into the Genesis. ~20.8 x 10.1 x 11.8 cm.
 
 The cartridge goes straight down into the top slot, label to the front;
-the two dust flaps swing down into the slot (parts flap_f, flap_b)."""
+the two dust flaps swing down into the slot (parts flap_f, flap_b).
+
+The Genesis underneath is the megadrive console model (consoles/
+megadrive.obj, so build that first). The 32X is built around its own
+origin, then moved onto the Genesis slot: its neck stands on the Genesis
+top and its cap clears the Genesis disc by 0.35 cm. The Genesis faces it
+hides (its slot, its closed dust flaps, the disc top under the cap) are left
+out, and it takes this model's colours. The combined unit has a raised
+triangle limit of 850 (the user's decision; other consoles 600)."""
 import math
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
-from x7model import Model
+from x7model import Model, load_model
 
 HOOD = (88, 88, 98)        # glossy upper shell + top
 SKIRT = (38, 38, 42)       # lower band of the cap
@@ -24,8 +32,16 @@ BADGE = (16, 16, 22)       # glossy black badge plate
 HOLE = (4, 4, 6)           # slot cavity, jack holes
 FLAP = (64, 64, 72)     # dust flaps
 NECK = (26, 26, 30)        # neck block under the cap
-PLUG = (64, 64, 70)        # plug into the Genesis
 SILVER = (160, 160, 168)   # jack rings
+RING = (99, 97, 107)       # Genesis: the bright rim of its disc
+TONGUE = (49, 44, 49)      # Genesis: the raised tongue on the disc
+RED = (186, 36, 40)        # Genesis: power strip and light
+
+# where the 32X sits on the Genesis (megadrive coordinates)
+GEN_SLOT_X, GEN_SLOT_Z = 2.9, -5.6     # Genesis slot centre
+GEN_TOP, GEN_DISC = 5.5, 6.85          # Genesis body top, flat disc top
+Y_BOT = 4.6                            # underside of the 32X cap (own coordinates)
+DX, DY, DZ = GEN_SLOT_X, GEN_DISC + 0.35 - Y_BOT, GEN_SLOT_Z
 
 m = Model('sega32x', 'console')
 
@@ -116,7 +132,6 @@ def top_edge(x, z):
     return 8.95 - 0.28 * z / 4.7
 
 
-Y_BOT = 4.6
 r0 = cap_ring(0.9, lambda x, z: Y_BOT)
 r2 = cap_ring(0.05, lambda x, z: 5.75)
 rs = cap_ring(0.12, seam)                    # top of the skirt
@@ -124,7 +139,7 @@ rh = cap_ring(-0.1, seam)                    # hood lip (overhangs the skirt)
 rh2 = cap_ring(0.5, lambda x, z: top_edge(x, z) - 0.35 - 0.45 * (7.65 - seam(x, z)))   # follows the wave a little
 rt = cap_ring(1.15, top_edge)
 
-m.polygon(r0, SKIRT, normal=(0, -1, 0))      # underside of the cap
+# (no underside: it sits 0.35 cm above the Genesis disc and can't be seen)
 band(r0, r2, SKIRT)
 band(r2, rs, SKIRT)
 band(rs, rh, DARK, up=-1.0)                  # dark seam under the hood lip
@@ -214,13 +229,42 @@ for x, ry in ((-3.0, 6.75), (3.0, 6.75)):
                for i in range(6)]
         m.polygon(pts, col, normal=(0, 0, -1))
 
-# ---------------------------------------------------------------- neck + plug under the cap
+# ---------------------------------------------------------------- neck under the cap
+# (the plug below it is inside the Genesis slot: not modelled)
 neck = Model.rounded_rect(-6.6, -2.8, 6.6, 2.8, 0.9, segments=1)
-m.prism(neck, 2.4, Y_BOT, NECK, top=False)
-m.box(-5.6, 0.0, -1.4, 5.6, 2.4, 1.4, PLUG, faces={'top': None})
-# a groove across the plug front and back
-m.decal_xy([(-5.2, 1.5), (5.2, 1.5), (5.2, 1.65), (-5.2, 1.65)], 1.4, DARK, lift=0.02)
-m.polygon([(x, y, -1.42) for x, y in [(-5.2, 1.5), (5.2, 1.5), (5.2, 1.65), (-5.2, 1.65)]], DARK, normal=(0, 0, -1))
+m.prism(neck, GEN_TOP - DY, Y_BOT, NECK, top=False, bottom=False)
+
+# ---------------------------------------------------------------- onto the Genesis
+m.verts = [(round(x + DX, 4), round(y + DY, 4), round(z + DZ, 4)) for x, y, z in m.verts]
+m._vmap = {}
+
+GEN_COLORS = {                         # megadrive colours -> this model's
+    (41, 40, 41): ISIDE,    # body
+    (16, 12, 16): DARK,     # grooves, recesses
+    (99, 97, 107): RING,    # the bright rim of the disc
+    (33, 28, 33): NECK,     # disc top
+    (74, 73, 82): FLAP,     # vent slats
+    (66, 60, 66): FLAP,     # slider knobs
+    (198, 199, 198): SILVER,  # reset button, pins
+    (189, 36, 41): RED,     # power strip
+    (255, 89, 57): RED,     # power light
+    (49, 44, 49): TONGUE,   # the raised tongue
+    (24, 24, 33): NECK,     # front band with the ports
+}
+# hidden under the cap: Genesis faces at or below the disc top inside this
+# area (the cap is 20.8 x 11.8; 1.4 cm in from its edge you can't see under it)
+HIDE = (DX - 9.0, DX + 9.0, DZ - 4.5, DZ + 4.5)
+gen = load_model(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'consoles', 'megadrive.obj'))
+gv = gen['verts']
+for ia, ib, ic, col, part, uv in gen['tris']:
+    if part != 'body' or col == (0, 4, 0):
+        continue                       # dust flaps and the dark cavity under them
+    tri = [gv[ia], gv[ib], gv[ic]]
+    if all(HIDE[0] <= x <= HIDE[1] and HIDE[2] <= z <= HIDE[3] and y <= GEN_DISC + 0.01 for x, y, z in tri):
+        continue
+    if col == (16, 12, 16) and all(6.6 < math.hypot(x - 2.9, z + 2.0) < 7.1 for x, y, z in tri):
+        continue                       # the thin groove ring inside the disc rim (too fine at 320x240)
+    m.tri(*tri, GEN_COLORS[col])
 
 print(m.stats())
 m.save()
