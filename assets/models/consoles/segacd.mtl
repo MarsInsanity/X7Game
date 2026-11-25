@@ -65,3 +65,9 @@ Ka 0 0 0
 Ks 0 0 0
 illum 1
 
+newmtl c_BD2429
+Kd 0.741176 0.141176 0.160784
+Ka 0 0 0
+Ks 0 0 0
+illum 1
+

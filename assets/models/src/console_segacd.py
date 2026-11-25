@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sega CD / Mega-CD model 1 (the front-loading unit that sits under a
-Genesis / Mega Drive): low-poly console model, modelled on its own.
+"""Sega CD / Mega-CD model 1 (the front-loading unit) with the Genesis /
+Mega Drive docked on top, as the real set always stands: low-poly model.
 
 Measured from photos (Wikimedia Commons: Sega-CD-Model1-Set.jpg,
 Sega-Genesis-CD-Model-1-Bare.jpg) and the published size (about
@@ -14,7 +14,14 @@ Sega-Genesis-CD-Model-1-Bare.jpg) and the published size (about
     x 9 % .. 52 % of the width, with the plain silver outline box where the
     badge sits), the dark indicator panel to its right with two grey
     light windows (upper left, lower right), a stepped top lip
-  * back: power / audio ports
+  * back: power / audio ports (the left side's vents are left out for
+    the triangle budget; the usual views show the front and right)
+The Genesis on top is the megadrive console model (consoles/megadrive.obj,
+so build that first), set on the top lip with its right side against the
+tower, where its expansion port meets the CD unit's connector. Faces the
+stacking hides are left out (its underside and plinth, the slot's inner
+cavity under the closed flaps, the CD unit's marks under the console), and
+it takes the CD unit's colours, to stay within 600 triangles and 14 colours.
 Moving part: "tray" (slides 14.5 cm forward along +Z; the disc lies label
 side up in its round recess).
 """
@@ -22,7 +29,7 @@ import math
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
-from x7model import Model
+from x7model import Model, load_model
 
 BODY = (54, 54, 57)        # matt black plastic (lifted so it shades)
 LIP = (68, 68, 71)         # the top lip / seat, a touch lighter
@@ -36,6 +43,7 @@ RECESS = (40, 40, 44)      # disc recess floor
 FOOT = (22, 22, 24)
 PORT = (120, 120, 130)
 INSET = (42, 42, 45)       # shallow inset panel on the tower
+RED = (186, 36, 40)        # the Genesis power strip and light
 
 # ------------------------------------------------------------ dimensions
 XL, XR = -15.25, 12.75     # main body (the tower is x 12.75 .. 15.25)
@@ -51,7 +59,7 @@ TX0, TX1 = -13.5, 0.1
 TY0, TFY1, TDY = 2.25, 4.95, 3.0     # bottom, face top, deck top
 TZF, TZFB, TZB = ZF + 0.15, ZF - 0.7, ZF - 15.2
 RX, RZ = -6.7, ZF - 7.2              # recess centre
-RR = 6.05 / math.cos(math.pi / 16)  # 16-gon, flats at 6.05 cm (disc r 6.0)
+RR = 6.05 / math.cos(math.pi / 12)  # 12-gon, flats at 6.05 cm (disc r 6.0)
 RY = 2.7                             # recess floor
 SLIDE = 14.5
 
@@ -107,13 +115,10 @@ m.polygon([(OX0, OY0, ZF), (OX0, OY1, ZF), (OX0, OY1, OZB), (OX0, OY0, OZB)], DA
 m.polygon([(OX1, OY0, ZF), (OX1, OY1, ZF), (OX1, OY1, OZB), (OX1, OY0, OZB)], DARK, normal=(-1, 0, 0))
 front_rect(OX0, OY0, OX1, OY1, OZB, DARK)
 
-# plinth (recessed, ribbed) and the four broad feet
-m.box(XL + 0.6, 0.3, ZB + 0.6, XR - 0.6, Y0, ZF - 1.0, PANEL, faces={'top': None})
+# plinth (recessed, ribbed) down to the floor
+m.box(XL + 0.6, 0.0, ZB + 0.6, XR - 0.6, Y0, ZF - 1.0, PANEL, faces={'top': None})
 for y in (0.55, 0.78):
     front_rect(XL + 0.8, y - 0.06, XR - 0.8, y + 0.06, ZF - 1.0, DARK, lift=0.03)
-for x0, x1 in ((XL + 0.9, XL + 5.9), (XR - 5.4, XR - 0.7)):
-    for z0, z1 in ((ZF - 4.5, ZF - 0.5), (ZB + 0.5, ZB + 4.0)):
-        m.box(x0, 0.0, z0, x1, Y0, z1, FOOT, faces={'top': None})
 
 # ---------------------------------------------------------------- front details
 # indicator panel (rounded, dark) with the two grey light windows
@@ -128,57 +133,68 @@ for r in ((OX0 - 0.3, OY0 - 0.4, OX1 + 0.4, OY0), (OX0 - 0.3, OY1, OX1 + 0.4, OY
 # thin groove under the top lip, across the front
 front_rect(FX0 + 0.2, Y1 - 0.25, FX1 - 0.2, Y1 - 0.12, ZF, DARK, lift=0.02)
 
-# ---------------------------------------------------------------- top
-# locating holes and the oval centre mark where the console's feet sit
-for x, z, w, d in ((-12.6, -7.4, 0.9, 1.4), (-12.6, 5.0, 0.9, 1.4), (8.2, -7.4, 0.9, 1.4),
-                   (8.2, 5.0, 0.9, 1.4), (-1.5, 8.4, 1.6, 0.7), (-1.5, -9.2, 1.6, 0.7)):
-    m.decal_xz([(x - w / 2, z + d / 2), (x + w / 2, z + d / 2), (x + w / 2, z - d / 2), (x - w / 2, z - d / 2)],
-               Y2, DARK, lift=0.03)
-oval = [(-1.5 + 1.3 * math.cos(2 * math.pi * i / 8), -1.0 + 0.55 * math.sin(2 * math.pi * i / 8)) for i in range(8)]
-m.decal_xz(oval, Y2, PANEL, lift=0.03)
-# shallow grooves outlining the console's seat along the left and back
-m.decal_xz([(XL + 0.8, ZF - 1.4), (XL + 1.05, ZF - 1.4), (XL + 1.05, ZB + 1.2), (XL + 0.8, ZB + 1.2)], Y2, DARK, lift=0.03)
-m.decal_xz([(XL + 0.8, ZB + 1.45), (XR - 0.8, ZB + 1.45), (XR - 0.8, ZB + 1.2), (XL + 0.8, ZB + 1.2)], Y2, DARK, lift=0.03)
-
 # ---------------------------------------------------------------- side tower (right)
 TWX0, TWX1 = XR, 15.25
 TZ0, TZ1, TY1 = -1.8, ZF - 1.5, 12.4
 prof = [(TZ0, Y0), (TZ1, Y0), (TZ1, TY1 - 1.0), (TZ1 - 1.0, TY1), (TZ0, TY1)]
 m.extrude_yz(prof, TWX0, TWX1, BODY, left=False)
-# its inner face above the body top, with the dark connector housing
+# its inner face above the body top (against the Genesis' right side)
 m.polygon([(TWX0, y, z) for z, y in [(TZ0, Y2), (TZ1, Y2), (TZ1, TY1 - 1.0), (TZ1 - 1.0, TY1), (TZ0, TY1)]],
           BODY, normal=(-1, 0, 0))
-m.polygon([(TWX0 - 0.03, 7.4, 6.4), (TWX0 - 0.03, 7.4, 0.6), (TWX0 - 0.03, 9.8, 0.6), (TWX0 - 0.03, 9.8, 6.4)],
-          DARK, normal=(-1, 0, 0))
 # a shallow inset panel on its outer face
 m.polygon([(TWX1 + 0.03, 2.2, -0.8), (TWX1 + 0.03, 2.2, 8.2), (TWX1 + 0.03, 9.4, 8.2), (TWX1 + 0.03, 9.4, -0.8)],
           INSET, normal=(1, 0, 0))
 
-# ---------------------------------------------------------------- left side vents
-for k in range(5):
-    z = 0.5 + k * 1.5
-    m.polygon([(XL - 0.03, 2.0, z), (XL - 0.03, 2.0, z + 0.6), (XL - 0.03, 4.8, z + 0.6), (XL - 0.03, 4.8, z)],
-              DARK, normal=(-1, 0, 0))
-
 # ---------------------------------------------------------------- back
-for x0, x1, y0, y1, col in ((-12.5, -8.5, 2.2, 4.4, PORT), (-6.5, -4.5, 2.6, 3.8, PORT),
-                            (-3.5, -1.5, 2.6, 3.8, PORT), (6.0, 10.0, 2.0, 4.6, PANEL)):
+for x0, x1, y0, y1, col in ((-12.5, -8.5, 2.2, 4.4, PORT), (-6.5, -1.5, 2.6, 3.8, PORT), (6.0, 10.0, 2.0, 4.6, PANEL)):
     m.polygon([(x1, y0, ZB - 0.03), (x0, y0, ZB - 0.03), (x0, y1, ZB - 0.03), (x1, y1, ZB - 0.03)],
               col, normal=(0, 0, -1))
+
+# ---------------------------------------------------------------- the Genesis on top
+# megadrive colours -> this model's (RGB565 values as load_model returns them)
+GEN_COLORS = {
+    (41, 40, 41): RECESS,   # body
+    (16, 12, 16): DARK,     # grooves, recesses
+    (99, 97, 107): PORT,    # the bright rim of the disc
+    (33, 28, 33): PANEL,    # disc top
+    (74, 73, 82): LIP,      # vent slats
+    (66, 60, 66): LIP,      # slider knobs
+    (198, 199, 198): BADGE,  # reset button, pins
+    (189, 36, 41): RED,     # power strip
+    (255, 89, 57): RED,     # power light
+    (49, 44, 49): BODY,     # the raised tongue
+    (24, 24, 33): FOOT,     # front band with the ports
+}
+GEN_PLINTH = 0.4                       # megadrive: its body starts above this plinth
+GEN_SLOT = (2.9 - 5.55, 2.9 + 5.55, -6.75, -4.45, 6.5)   # slot x0, x1, z0, z1 and the flaps' top (megadrive)
+GDX, GDY, GDZ = (XL + XR) / 2, Y2 - GEN_PLINTH, -0.175
+gen = load_model(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'consoles', 'megadrive.obj'))
+gv = gen['verts']
+for ia, ib, ic, col, part, uv in gen['tris']:
+    if part != 'body' or col == (0, 4, 0):
+        continue                       # dust flaps and the dark cavity under them
+    tri = [gv[ia], gv[ib], gv[ic]]
+    if max(p[1] for p in tri) <= GEN_PLINTH + 0.01:
+        continue                       # plinth and underside, standing on the lip
+    if col == (16, 12, 16) and all(6.6 < math.hypot(p[0] - 2.9, p[2] + 2.0) < 7.1 for p in tri):
+        continue                       # the thin groove ring inside the disc rim (too fine at 320x240)
+    m.tri(*[(x + GDX, y + GDY, z + GDZ) for x, y, z in tri], GEN_COLORS[col])
+# the closed dust flaps, seen through the slot
+sx0, sx1, sz0, sz1, sy = GEN_SLOT
+m.polygon([(sx0 + GDX, sy + GDY, sz1 + GDZ), (sx1 + GDX, sy + GDY, sz1 + GDZ),
+           (sx1 + GDX, sy + GDY, sz0 + GDZ), (sx0 + GDX, sy + GDY, sz0 + GDZ)], BODY, normal=(0, 1, 0))
 
 # ---------------------------------------------------------------- the tray (moving part)
 with m.part('tray'):
     # face: a glossy panel sitting in the opening, slightly proud
-    m.box(TX0, TY0, TZFB, TX1, TFY1, TZF, TRAYF, faces={'back': None})
+    m.box(TX0, TY0, TZFB, TX1, TFY1, TZF, TRAYF, faces={'back': None, 'bottom': None})
     # silver outline box (where the badge sits) on the face, no text
     bx0, bx1, by0, by1, t = TX0 + 2.1, TX0 + 11.4, 2.55, 3.35, 0.18
     for r in ((bx0, by0, bx1, by0 + t), (bx0, by1 - t, bx1, by1), (bx0, by0, bx0 + t, by1), (bx1 - t, by0, bx1, by1)):
         front_rect(r[0], r[1], r[2], r[3], TZF, BADGE, lift=0.03)
-    # finger notch line along the face's top edge
-    front_rect(TX0 + 0.4, TFY1 - 0.35, TX1 - 0.4, TFY1 - 0.25, TZF, DARK, lift=0.03)
     # the deck behind the face: a slab with a round recess for the disc
-    m.box(TX0, TY0, TZB, TX1, TDY, TZFB, TRAYTOP, faces={'top': None, 'front': None})
-    N = 16
+    m.box(TX0, TY0, TZB, TX1, TDY, TZFB, TRAYTOP, faces={'top': None, 'front': None, 'bottom': None})
+    N = 12
     ring = [(RX + RR * math.cos(math.pi / 2 + 2 * math.pi * i / N), RZ + RR * math.sin(math.pi / 2 + 2 * math.pi * i / N))
             for i in range(N)]
     # deck top = rectangle minus the round hole, as one sector per hole edge

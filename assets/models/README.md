@@ -9,7 +9,8 @@ media moves into the console, while lids, doors and trays open and close.
   pcenginecd, psx) are bare discs, `fds` is a disk card, and `arcade` is a game board
 - `systems/<id>.json`: how that system's media goes into its console (see below)
 - `src/<kind>_<id>.py`: the script that builds each model. Run it to rebuild
-  the OBJ/MTL (`python assets/models/src/console_nes.py`)
+  the OBJ/MTL (`python assets/models/src/console_nes.py`). `console_segacd.py`
+  stacks the Genesis from `consoles/megadrive.obj` on top, so build that first
 - `previews/`: renders at the frontend's 320x240 in RGB565, doubled to 640x480:
   - `console_*` and `media_*`, one per model
   - `system_*`, a four-frame insertion strip per system
