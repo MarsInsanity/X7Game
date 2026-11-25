@@ -1,109 +1,86 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""PlayStation game disc in its CD jewel case, standing upright, front to +Z.
+"""PlayStation game disc: a bare 12 cm "black-bottom" CD standing upright,
+label side to +Z.
 
-Real size ~14.2 x 12.5 x 1.0 cm. Signature features: the clear case (light
-blue-grey edges and a raised frame around the lid), the ridged hinge strip
-down the left side, the black vertical band down the left of the front cover
-(the classic PlayStation cover layout) with four small coloured blocks at its
-top, a light cover behind the lid, and the distinctive black-bottom disc: a
-near-black data side with a silver inner ring, clear hub and centre hole.
-The back carries the rear insert and the black spine.
+Real size (Red Book CD): 12.0 cm across, 1.2 mm thick, 1.5 cm centre hole.
+What makes it a PlayStation disc is the black-tinted polycarbonate: the
+whole read side is near black (a faint purple-blue sheen), and wherever no
+print covers the plastic on the label side it reads black too: the clamping
+hub around the hole and a thin rim at the outer edge. Seen from the label
+side: the dark hub around the hole (out to ~3.8 cm across), a narrow bright
+silver band (the metal layer at the stacking ring), the printed label (the
+game's picture) from 4.6 cm to 11.8 cm across, and the thin black rim.
+
+Layout: centre at (0, 6, 0); the lowest outer vertex touches y = 0. The
+disc body runs z = -0.06 .. +0.06 (1.2 mm); the picture is a ring lifted
+0.02 cm off the label side (z = +0.08), so the whole model spans
+12.0 x 12.0 x 0.14 cm. It goes into the console label side UP (the round
+lid opens, the disc drops onto the spindle, the lid closes); that path is
+in assets/models/systems/psx.json, made with the console.
 """
 import math
-import os, sys
+import os
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-CLEAR = (178, 190, 204)      # clear plastic edges / lid frame
-HINGE = (214, 222, 232)      # hinge strip (thicker clear plastic, catches light)
-HINGE_D = (120, 132, 148)    # hinge ridges
-COVER = (196, 200, 206)      # light cover insert behind the lid
-DISC = (40, 32, 56)          # black-bottom disc data side (slight purple sheen)
-SILVER = (226, 230, 238)     # mirror ring around the hub
-HUB = (140, 148, 162)        # clear hub of the disc
-BAND = (14, 14, 16)          # black cover band / spine / centre hole
-RED = (224, 40, 40)          # coloured blocks at the top of the band
-YELLOW = (240, 200, 20)
-GREEN = (30, 170, 90)
-BLUE = (40, 90, 210)
-BACK = (70, 80, 110)         # rear insert artwork area
+LABEL = (176, 178, 188)       # picture fallback: a plain light-grey printed label
+SILVER = (230, 232, 240)      # metal band between the hub and the print
+HUB = (44, 40, 58)            # black-tinted clear hub (label side)
+RIM = (26, 22, 34)            # black plastic rim outside the print
+UNDER = (40, 32, 62)          # the black read side (faint purple sheen)
+EDGE = (78, 72, 96)           # outer edge and hole wall (tinted clear plastic)
 
-W, H = 14.2, 12.5
-X0, X1 = -W / 2, W / 2
-ZB, ZF = -0.5, 0.42          # case body back / tray face
-ZL = 0.5                     # raised lid frame / hinge front
-HW = 1.0                     # hinge strip width on the left
-F = 0.35                     # lid frame width
-BW = 2.0                     # black cover band width
-BX = X0 + HW + BW            # right edge of the band
+R = 6.0                       # outer radius
+R_HOLE = 0.75                 # 1.5 cm centre hole
+R_HUB = 1.9                   # dark clamping hub
+R_LAB0, R_LAB1 = 2.3, 5.9     # printed label ring (the picture)
+R_SIL = 2.42                  # silver band runs on under the print (its 12-gon
+                              # edge then never peeks out past the 24-gon picture)
+CY = R                        # centre height: lowest vertex on y = 0
+ZB, ZF = -0.06, 0.06          # read side / label side (1.2 mm)
+LIFT = 0.02                   # picture above the label side
+
+N = 24                        # outer segments (a vertex straight down)
+NH = 12                       # hub and hole segments
 
 m = Model('psx', 'media')
 
-# case body: cover face on the front, clear sides, black spine on the left
-m.box(X0, 0, ZB, X1, H, ZF, CLEAR, faces={'front': COVER, 'back': BAND, 'left': BAND})
 
-# raised clear lid frame around the front
-m.box(X0 + HW, H - F, ZF, X1, H, ZL, CLEAR, faces={'back': None})
-m.box(X0 + HW, 0, ZF, X1, F, ZL, CLEAR, faces={'back': None})
-m.box(X1 - F, F, ZF, X1, H - F, ZL, CLEAR, faces={'back': None, 'top': None, 'bottom': None})
-
-# hinge strip down the left edge, with ridges at the hinge knuckles
-m.box(X0, 0, ZF, X0 + HW, H, ZL + 0.04, HINGE, faces={'back': None})
-for y in (0.8, 1.5, H - 1.75, H - 1.05):
-    m.decal_xy([(X0 + 0.15, y), (X0 + HW - 0.15, y), (X0 + HW - 0.15, y + 0.25), (X0 + 0.15, y + 0.25)],
-               ZL + 0.04, HINGE_D, lift=0.02)
+def pt(r, i, n, z):
+    a = -math.pi / 2 + 2 * math.pi * i / n
+    return (r * math.cos(a), CY + r * math.sin(a), z)
 
 
-def circle(cx, cy, r, n):
-    return [(cx + r * math.cos(2 * math.pi * i / n + math.pi / n),
-             cy + r * math.sin(2 * math.pi * i / n + math.pi / n)) for i in range(n)]
+def ring(r0, n0, r1, n1, z, color, normal):
+    """Flat annulus r0 (n0 segments) .. r1 (n1 = n0 or 2 * n0 segments)."""
+    k = n1 // n0
+    for i in range(n0):
+        outer = [pt(r1, k * i + j, n1, z) for j in range(k + 1)]
+        m.polygon([pt(r0, i, n0, z), pt(r0, i + 1, n0, z)] + outer[::-1], color, normal=normal)
 
 
-def clip_right_of(poly, xmin):
-    """Clip a convex outline to x >= xmin (the disc runs under the band, and
-    stacked decals over long thin triangles z-fight, so keep them apart)."""
-    out = []
-    for i in range(len(poly)):
-        a, b = poly[i], poly[(i + 1) % len(poly)]
-        ina, inb = a[0] >= xmin, b[0] >= xmin
-        if ina:
-            out.append(a)
-        if ina != inb:
-            t = (xmin - a[0]) / (b[0] - a[0])
-            out.append((xmin, a[1] + t * (b[1] - a[1])))
-    return out
+def wall(r, n, color, outward):
+    for i in range(n):
+        a = -math.pi / 2 + 2 * math.pi * (i + 0.5) / n
+        d = 1 if outward else -1
+        m.polygon([pt(r, i, n, ZB), pt(r, i + 1, n, ZB), pt(r, i + 1, n, ZF), pt(r, i, n, ZF)],
+                  color, normal=(d * math.cos(a), d * math.sin(a), 0))
 
 
-# black vertical cover band down the left of the front, full height inside
-# the frame, with four coloured blocks near its top (side by side at one depth)
-YB = H - F - 2.2                     # bottom of the coloured blocks
-m.decal_xy([(X0 + HW, F), (BX, F), (BX, YB), (X0 + HW, YB)], ZF, BAND, lift=0.06)
-bh = 0.55
-cols = (BLUE, GREEN, YELLOW, RED)   # bottom to top
-for k, col in enumerate(cols):
-    ya = YB + k * bh
-    m.decal_xy([(X0 + HW, ya), (BX, ya), (BX, ya + bh), (X0 + HW, ya + bh)], ZF, BAND, lift=0.06)
-    m.decal_xy([(X0 + HW + 0.45, ya + 0.1), (BX - 0.45, ya + 0.1), (BX - 0.45, ya + bh - 0.1),
-                (X0 + HW + 0.45, ya + bh - 0.1)], ZF, col, lift=0.10)
-yt = YB + 4 * bh
-m.decal_xy([(X0 + HW, yt), (BX, yt), (BX, H - F), (X0 + HW, H - F)], ZF, BAND, lift=0.06)
+# label side (+Z): black hub, silver band, black plastic under the print and
+# at the rim; the picture lies on top
+ring(R_HOLE, NH, R_HUB, NH, ZF, HUB, (0, 0, 1))
+ring(R_HUB, NH, R_SIL, NH, ZF, SILVER, (0, 0, 1))
+ring(R_SIL, NH, R, N, ZF, RIM, (0, 0, 1))
+# read side (-Z): black all over
+ring(R_HOLE, NH, R, N, ZB, UNDER, (0, 0, -1))
+# outer edge and the centre hole's wall
+wall(R, N, EDGE, True)
+wall(R_HOLE, NH, EDGE, False)
 
-# the black-bottom disc behind the lid, its left edge running under the band
-DCX, DCY = X1 - F - 5.75, H / 2
-m.decal_xy(clip_right_of(circle(DCX, DCY, 5.7, 22), BX), ZF, DISC, lift=0.06)
-m.decal_xy(circle(DCX, DCY, 2.3, 14), ZF, SILVER, lift=0.10)
-m.decal_xy(circle(DCX, DCY, 1.6, 12), ZF, HUB, lift=0.14)
-m.decal_xy(circle(DCX, DCY, 0.72, 8), ZF, BAND, lift=0.18)
-
-# back insert: artwork panel on the rear, with a black band down its left
-ZK = ZB - 0.02
-m.polygon([(X1 - 0.7, 0.9, ZK), (X0 + 2.6, 0.9, ZK), (X0 + 2.6, H - 0.9, ZK), (X1 - 0.7, H - 0.9, ZK)],
-          BACK, normal=(0, 0, -1))
-m.polygon([(X1 - 0.7, H - 2.0, ZK - 0.02), (X0 + 2.6, H - 2.0, ZK - 0.02), (X0 + 2.6, H - 1.6, ZK - 0.02),
-           (X1 - 0.7, H - 1.6, ZK - 0.02)], COVER, normal=(0, 0, -1))
-# spine: a light band near the top of the black spine
-m.polygon([(X0 - 0.02, H - 2.4, ZB + 0.05), (X0 - 0.02, H - 2.4, ZF - 0.05),
-           (X0 - 0.02, H - 1.6, ZF - 0.05), (X0 - 0.02, H - 1.6, ZB + 0.05)], COVER, normal=(-1, 0, 0))
+# the printed label = the game's picture, upright (u = left to right, v = up)
+m.image_ring(0, CY, ZF + LIFT, R_LAB0, R_LAB1, segments=N, fallback=LABEL)
 
 print(m.stats())
 m.save()

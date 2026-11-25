@@ -1,88 +1,110 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Game Boy Color Game Pak: the black Game Boy cartridge (notched top-right
-corner), standing upright, label to +Z, contacts edge at y = 0."""
+"""Game Boy Color Game Pak: the black Game Boy Color-only cartridge, standing
+upright, label (picture area) to +Z, contacts edge at y = 0.
+
+Real size 5.7 x 6.5 x 0.78 cm. Shape after the photos: a plain rectangle
+with a small square step cut out of the top-right corner (seen from the
+front), a recessed label filling most of the lower front, a raised top band
+with the moulded logo strip, grip ribs on both sides near the top, a slot
+along the bottom edge with the circuit board's gold contacts, and on the
+back two long grooves, a step over the contacts, a dimple and the screw.
+
+It goes into the Game Boy Color's top slot contacts first (y = 0 down),
+label facing the console's back."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (48, 48, 56)        # black shell
-EDGE = (80, 80, 92)         # side / top faces, so the black edges read
-EMBOSS = (104, 104, 118)    # raised logo strip, arrow, grip ribs
-LABEL = (232, 228, 212)     # cream label border
-SKY = (72, 152, 232)        # picture area
-GROUND = (96, 184, 72)      # picture lower part
-BAND = (216, 48, 56)        # title band across the top of the label
-ACC1 = (248, 200, 40)       # colour-logo accent stripes
-ACC2 = (144, 72, 208)
+SHELL = (40, 40, 48)        # black shell, front and back
+EDGE = (76, 76, 88)         # sides / top, so the edges read
+SCOOP = (58, 58, 70)        # shallow logo scoop on the top band
+EMBOSS = (108, 108, 122)    # moulded logo strip, grip ribs
+LABEL = (226, 222, 206)     # plain label colour (fallback for the picture)
+SLOT = (14, 14, 18)         # inside the contacts slot, back grooves
 PCB = (24, 96, 48)
 GOLD = (216, 176, 64)
 SCREW = (150, 150, 158)
 
-W, H = 5.7, 6.5
+W, H, D = 5.7, 6.5, 0.78
 hw = W / 2
-N = 0.65                    # size of the cut top-right corner
-ZF, ZB, ZM = 0.30, -0.38, -0.14   # recessed label face, back, back of the front shell
-ZR = 0.39                   # raised frame around the label
-CX = 2.45                   # half width of the contacts opening on the back
-CY = 0.85                   # height of the contacts opening
-LX, LY0, LY1 = 2.3, 1.25, 5.3     # label recess
+NX, NY = 0.52, 0.27                 # top-right step: width, depth
+ZB, ZF = -D / 2, D / 2              # back, front (frame) faces
+ZL = ZF - 0.06                      # recessed label floor
+ZS = ZF - 0.11                      # floor of the logo scoop above the label
+LX, LY0, LY1 = 2.35, 0.8, 4.75      # label recess: half width, bottom, top
+TY = 6.15                           # top of the scoop (bottom of the top lip)
+SD = LY0                            # slot height (bottom lip = label bottom)
+SX = 2.6                            # slot half width (nearly the whole width)
+ZS0, ZS1 = -0.29, 0.16              # slot: thin back wall, circuit board face
+BAND = 1.2                          # back step over the contacts
+ZBB = ZB + 0.04                     # back face of that step
 
 m = Model('gbc', 'media')
 
 
 def face(pts, z, color, nz=1):
-    """flat face at depth z facing +Z (nz = 1) or -Z (nz = -1)"""
     return m.polygon([(x, y, z) for x, y in pts], color, normal=(0, 0, nz))
 
 
-# front half of the shell (its front face is the label, tiled below)
-front = [(-hw, 0), (-CX, 0), (CX, 0), (hw, 0), (hw, H - N), (hw - N, H), (-hw, H)]
-m.extrude_xy(front, ZM, ZF, SHELL, front=False, back=False, side=EDGE)
-# back half: same outline with the contacts opening at the bottom
-back = [(-hw, 0), (-CX, 0), (-CX, CY), (CX, CY), (CX, 0), (hw, 0), (hw, H - N), (hw - N, H), (-hw, H)]
-m.extrude_xy(back, ZB, ZM, SHELL, front=False, side=EDGE)
-# circuit board face in the opening, with gold contacts
-face([(CX, 0), (-CX, 0), (-CX, CY), (CX, CY)], ZM, PCB, -1)
-n = 10
-pitch = (2 * CX - 0.3) / n
+# ---------------------------------------------------------------- body
+# outline from the slot top (y = SD) up, with the top-right step; its front
+# (at the scoop floor ZS) is covered by the front frame pieces below
+outline = [(-hw, SD), (hw, SD), (hw, H - NY), (hw - NX, H - NY), (hw - NX, H), (-hw, H)]
+m.extrude_xy(outline, ZBB, ZS, SHELL, front=False, back=False, side=EDGE)
+# the back is stepped: full thickness above BAND, thinner over the contacts
+up = [(-hw, BAND), (hw, BAND), (hw, H - NY), (hw - NX, H - NY), (hw - NX, H), (-hw, H)]
+m.extrude_xy(up, ZB, ZBB, SHELL, front=False, side=EDGE)
+
+# ---------------------------------------------------------------- bottom part with the contacts slot
+# front lip (y 0..SD), from the board face to the front frame
+m.box(-hw, 0, ZS1, hw, SD, ZF, SHELL, faces={'back': None, 'top': EDGE, 'bottom': EDGE, 'left': EDGE, 'right': EDGE})
+# back wall (y 0..SD) at the stepped back
+m.box(-hw, 0, ZBB, hw, SD, ZS0, SHELL, faces={'front': None, 'top': None, 'bottom': EDGE, 'left': EDGE, 'right': EDGE})
+# the slot's ends
+for x0, x1 in ((-hw, -SX), (SX, hw)):
+    m.box(x0, 0, ZS0, x1, SD, ZS1, EDGE, faces={'front': None, 'back': None, 'top': None})
+# inside the slot: back wall, ceiling, the board with its contacts
+face([(-SX, 0), (SX, 0), (SX, SD), (-SX, SD)], ZS0, SLOT, 1)
+m.polygon([(-SX, SD - 0.01, ZS0), (SX, SD - 0.01, ZS0), (SX, SD - 0.01, ZS1), (-SX, SD - 0.01, ZS1)], SLOT, normal=(0, -1, 0))
+face([(-SX, 0), (SX, 0), (SX, SD), (-SX, SD)], ZS1, PCB, -1)
+n = 8
+pitch = 2 * SX / n
 for i in range(n):
-    x0 = CX - 0.15 - i * pitch - 0.06
-    x1 = x0 - pitch + 0.14
-    face([(x0, 0.05), (x1, 0.05), (x1, CY - 0.2), (x0, CY - 0.2)], ZM - 0.03, GOLD, -1)
+    x0 = -SX + i * pitch + 0.06
+    face([(x0, 0.0), (x0 + pitch - 0.12, 0.0), (x0 + pitch - 0.12, SD - 0.25), (x0, SD - 0.25)], ZS1 - 0.02, GOLD, -1)
 
-# raised frame around the recessed label
-m.extrude_xy([(-hw, LY1), (hw, LY1), (hw, H - N), (hw - N, H), (-hw, H)], ZF, ZR, SHELL, back=False, side=EDGE)
-m.box(-hw, 0, ZF, hw, LY0, ZR, SHELL, faces={'back': None, 'bottom': EDGE, 'top': EDGE, 'left': EDGE, 'right': EDGE})
-m.box(-hw, LY0, ZF, -LX, LY1, ZR, SHELL, faces={'back': None, 'bottom': None, 'top': None, 'left': EDGE, 'right': EDGE})
-m.box(LX, LY0, ZF, hw, LY1, ZR, SHELL, faces={'back': None, 'bottom': None, 'top': None, 'left': EDGE, 'right': EDGE})
+# ---------------------------------------------------------------- front
+# side bars from the bottom lip up to the top lip, and the top lip (with the step)
+for x0, x1 in ((-hw, -LX), (LX, hw)):
+    m.box(x0, LY0, ZS, x1, TY, ZF, SHELL, faces={'back': None, 'bottom': None, 'top': None, 'left': EDGE, 'right': EDGE})
+lip = [(-hw, TY), (hw, TY), (hw, H - NY), (hw - NX, H - NY), (hw - NX, H), (-hw, H)]
+m.extrude_xy(lip, ZS, ZF, SHELL, back=False, side=EDGE)
+# the label: a raised floor in the recess, the picture on it
+m.box(-LX, LY0, ZS, LX, LY1, ZL, LABEL, faces={'back': None, 'bottom': None, 'left': None, 'right': None, 'top': EDGE})
+m.image_xy(-LX, LY0, LX, LY1, ZL, fallback=LABEL, lift=0.03)
+# the deeper scoop above the label, with the moulded logo strip (plain, no
+# lettering) and the line under it
+face([(-LX, LY1), (LX, LY1), (LX, TY), (-LX, TY)], ZS, SCOOP)
+m.box(-2.05, 5.5, ZS, 1.9, 5.95, ZS + 0.06, EMBOSS, faces={'back': None})
+m.box(-0.9, 5.08, ZS, 1.9, 5.17, ZS + 0.04, EMBOSS, faces={'back': None})
 
-# moulded (raised) logo strip on the top band and the insert arrow
-m.box(-2.35, 5.65, ZR, 0.9, 6.15, ZR + 0.04, EMBOSS, faces={'back': None})
-m.extrude_xy([(1.3, 6.08), (2.1, 6.08), (1.7, 5.5)], ZR, ZR + 0.04, EMBOSS, back=False)
+# ---------------------------------------------------------------- sides: grip ribs near the top
+for i in range(3):
+    y = 5.05 + i * 0.32
+    m.box(-hw - 0.04, y, ZB + 0.1, -hw, y + 0.12, ZF - 0.1, EMBOSS, faces={'right': None})
+    m.box(hw, y, ZB + 0.1, hw + 0.04, y + 0.12, ZF - 0.1, EMBOSS, faces={'left': None})
 
-# label filling the recess, tiled (no decal stacked on a big face: the
-# software renderer's depth is not perspective correct)
-ax0, ax1 = -LX + 0.25, LX - 0.25
-gy, sy, ty, by = 1.55, 2.4, 4.2, 4.35       # ground / sky / stripes / band starts
-ey = 5.0                                     # top of the picture
-face([(-LX, LY0), (LX, LY0), (LX, gy), (ax1, gy), (0.0, gy), (ax0, gy), (-LX, gy)], ZF, LABEL)
-face([(-LX, ey), (ax0, ey), (0.0, ey), (ax1, ey), (LX, ey), (LX, LY1), (-LX, LY1)], ZF, LABEL)
-face([(-LX, gy), (ax0, gy), (ax0, sy), (ax0, ty), (ax0, by), (ax0, ey), (-LX, ey)], ZF, LABEL)
-face([(ax1, gy), (LX, gy), (LX, ey), (ax1, ey), (ax1, by), (ax1, ty), (ax1, sy)], ZF, LABEL)
-face([(ax0, gy), (0.0, gy), (ax1, gy), (ax1, sy), (ax0, sy)], ZF, GROUND)
-face([(ax0, sy), (ax1, sy), (ax1, ty), (0.0, ty), (ax0, ty)], ZF, SKY)
-face([(ax0, ty), (0.0, ty), (0.0, by), (ax0, by)], ZF, ACC1)
-face([(0.0, ty), (ax1, ty), (ax1, by), (0.0, by)], ZF, ACC2)
-face([(ax0, by), (0.0, by), (ax1, by), (ax1, ey), (0.0, ey), (ax0, ey)], ZF, BAND)
-
-# a small sun in the picture (a thin raised disc: small, so no depth fighting)
-m.cylinder_z(1.2, 3.5, 0.38, ZF, ZF + 0.03, ACC1, segments=8, back=False)
-
-# back: grip ribs near the top and the centre screw
-for i in range(4):
-    y = 4.9 + i * 0.32
-    m.box(-2.0, y, ZB - 0.06, 2.0, y + 0.14, ZB, EMBOSS, faces={'front': None})
-m.cylinder_z(0.0, 3.0, 0.22, ZB - 0.03, ZB, SCREW, segments=8, front=False)
+# ---------------------------------------------------------------- back
+# the stepped lower part (SD..BAND)
+face([(-hw, SD), (hw, SD), (hw, BAND), (-hw, BAND)], ZBB, SHELL, -1)
+# two long grooves from the top down to the step
+for gx in (-1.56, 1.47):
+    face([(gx - 0.15, BAND + 0.05), (gx - 0.15, H - 0.02), (gx + 0.15, H - 0.02), (gx + 0.15, BAND + 0.05)], ZB - 0.02, SLOT, -1)
+# dimple and screw
+oct8 = lambda cx, cy, r: [(cx + r * c, cy + r * s) for c, s in
+                          ((1, 0), (.707, .707), (0, 1), (-.707, .707), (-1, 0), (-.707, -.707), (0, -1), (.707, -.707))]
+face(oct8(0.0, 3.3, 0.2), ZB - 0.02, SLOT, -1)
+face(oct8(0.0, 1.78, 0.17), ZB - 0.02, SCREW, -1)
 
 print(m.stats())
 print(m.save())

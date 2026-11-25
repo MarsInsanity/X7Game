@@ -1,0 +1,17 @@
+{
+  "console": "../consoles/sega32x.obj",
+  "media": "../media/sega32x.obj",
+  "view": [30, 28],
+  "parts": {
+    "flap_f": {"hinge": {"pivot": [0, 9.7, -0.37], "axis": [1, 0, 0], "angle": -90}},
+    "flap_b": {"hinge": {"pivot": [0, 9.7, -2.63], "axis": [1, 0, 0], "angle": 90}}
+  },
+  "path": [
+    {"pos": [0, 19.0, -1.5], "rot": [0, 0, 0]},
+    {"pos": [0, 5.2, -1.5], "rot": [0, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.3, "open": ["flap_f", "flap_b"]},
+    {"time": 0.9, "media": [0, 1]}
+  ]
+}

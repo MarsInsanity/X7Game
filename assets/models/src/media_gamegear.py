@@ -1,98 +1,105 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Sega Game Gear cartridge (black), standing upright, label to +Z.
 
-Real size ~6.8 x 5.3 x 0.8 cm (wider than tall). Signature features: the
-black shell with well-rounded top corners, the large recessed front label
-framed by a raised rim, the thicker grip band along the top edge with
-horizontal grip lines, and the connector opening with gold contacts along
-the bottom of the back.
+Measured from a straight-on Commons photo (Game_gear_cartridge.jpg), scaled
+to the 6.8 cm width (the 5.7 x 4.0 cm label then matches the real label
+size): the shell is about as tall as it is wide. Front features, bottom to
+top: a raised plain oval near the bottom edge, the landscape label (square
+bottom corners, rounded top corners), and above it a recessed grip area
+shaped like an upside-down U (it runs a little way down both sides of the
+label) with three grip ribs. The back is flat; at the bottom of the back a
+notch opens onto the board's gold contacts.
+
+Insertion: the Game Gear takes it top-down into a slot at the back, label
+facing the back. The whole shell is one clean block 6.8 x 6.8 x 0.8 cm
+(x -3.4..3.4, y 0..6.8, z -0.4..0.4), rounded only at the two top corners;
+nothing sticks out of it.
 """
 import math
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (46, 46, 52)         # black plastic (kept just off black so shading reads)
-RIM = (66, 66, 74)           # raised rim / grip band face
-GRIP = (100, 100, 110)       # grip lines
-RECESS = (22, 22, 26)        # connector opening
-LABEL = (226, 226, 220)      # label paper
-ART = (60, 120, 200)         # label artwork area
-BAND = (200, 40, 48)         # label title band
-TOPBAND = (16, 16, 20)       # dark strip at the label top
+SHELL = (44, 44, 50)         # black plastic
+FLOOR = (24, 24, 28)         # floor of the grip recess (in shadow)
+WALL = (84, 84, 94)          # recess walls (catch the light: draw the U)
+OVAL = (70, 70, 78)          # raised plain oval (catches the light)
+GRIP = (100, 100, 110)       # grip ribs
+RECESS = (12, 12, 14)        # connector notch, between the contacts
+LABEL = (226, 226, 220)      # plain label paper (picture fallback)
 GOLD = (232, 190, 70)        # contacts
 
-W, H = 6.8, 5.3
+W, H = 6.8, 6.8
 X0, X1 = -W / 2, W / 2
-R = 0.9                      # top corner radius
-ZB, ZF, ZR = -0.4, 0.3, 0.4  # back, recessed front, raised rim
+ZB = -0.4                    # back
+ZF = 0.38                    # front face (the oval rises to 0.40)
+ZL = ZF - 0.07               # floor of the label / grip recess
+R = 0.35                     # shell top corner radius
 
-LX0, LX1 = -2.95, 2.95       # label recess
-LY0, LY1 = 0.55, 3.95
+LX0, LX1, LY0, LY1, LR = -2.85, 2.85, 1.6, 5.6, 0.3     # label (picture)
+UX0, UX1, UY0, UY1, UR = -3.12, 3.12, 4.05, 6.2, 0.5    # upside-down U grip recess
 
 
-def top_outline(y_from):
-    """the outline above y_from: straight sides, rounded top corners"""
-    pts = [(X0, y_from), (X1, y_from)]
-    for s in range(4):
-        a = math.radians(0 + 90 * s / 3)
-        pts.append((X1 - R + R * math.cos(a), H - R + R * math.sin(a)))
-    for s in range(4):
-        a = math.radians(90 + 90 * s / 3)
-        pts.append((X0 + R + R * math.cos(a), H - R + R * math.sin(a)))
-    return pts
+def arc(cx, cy, r, a0, a1, n):
+    return [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * i / n)),
+             cy + r * math.sin(math.radians(a0 + (a1 - a0) * i / n))) for i in range(n + 1)]
 
+
+def shell_outline():
+    return [(X0, 0), (X1, 0)] + arc(X1 - R, H - R, R, 0, 90, 2) + arc(X0 + R, H - R, R, 90, 180, 2)
+
+
+# recess outline (counter-clockwise): the label rectangle joined to the U
+RECESS_PTS = ([(LX0, LY0), (LX1, LY0), (LX1, UY0), (UX1, UY0)]
+              + arc(UX1 - UR, UY1 - UR, UR, 0, 90, 2) + arc(UX0 + UR, UY1 - UR, UR, 90, 180, 2)
+              + [(UX0, UY0), (LX0, UY0)])
 
 m = Model('gamegear', 'media')
 
-# shell core (its front face is the floor of the label recess)
-PX0, PX1, PY0, PY1 = -2.6, 2.6, 1.15, 3.9
-core = top_outline(0)
-core = [core[0], core[1], (X1, PY0), (X1, PY1)] + core[2:] + [(X0, PY1), (X0, PY0)]
-m.extrude_xy(core, ZB, ZF, SHELL, front=False, back=False)
-# front: only the label recess floor shows (the rim covers the rest)
-m.decal_xy([(LX0, LY0), (LX1, LY0), (LX1, LY1), (LX0, LY1)], ZF, SHELL, lift=0)
+# ---- shell: main slab (front part) + back slab around the connector notch
+NX0, NX1, NY = -2.9, 2.9, 0.7        # connector notch, open at the bottom
+ZN = ZB + 0.22                       # notch floor: the board's contact face
+m.extrude_xy(shell_outline(), ZN, ZF, SHELL, front=False, back=False)
+u_shape = [(X0, 0), (NX0, 0), (NX0, NY), (NX1, NY), (NX1, 0)] + shell_outline()[1:]
+m.extrude_xy(u_shape, ZB, ZN, SHELL, front=False)
+m.polygon([(NX0, 0, ZN), (NX0, NY, ZN), (NX1, NY, ZN), (NX1, 0, ZN)], RECESS, normal=(0, 0, -1))
+N_C = 12
+pitch = (NX1 - NX0 - 0.3) / N_C
+for i in range(N_C):
+    x = NX0 + 0.15 + i * pitch + 0.04
+    m.polygon([(x, 0.06, ZN - 0.02), (x, NY - 0.12, ZN - 0.02), (x + pitch - 0.08, NY - 0.12, ZN - 0.02),
+               (x + pitch - 0.08, 0.06, ZN - 0.02)], GOLD, normal=(0, 0, -1))
 
-# back face built in pieces (small triangles keep depth exact) around a
-# raised moulded back plate
-m.polygon([(x, y, ZB) for x, y in top_outline(PY1)], SHELL, normal=(0, 0, -1))
-for x0, y0, x1, y1 in ((X0, 0, X1, PY0), (X0, PY0, PX0, PY1), (PX1, PY0, X1, PY1)):
-    m.polygon([(x0, y0, ZB), (x0, y1, ZB), (x1, y1, ZB), (x1, y0, ZB)], SHELL, normal=(0, 0, -1))
-m.box(PX0, PY0, ZB - 0.06, PX1, PY1, ZB, SHELL, faces={'front': None, 'back': RIM})
+# ---- front face around the recess: bottom band + left and right halves
+m.polygon([(X0, 0, ZF), (X1, 0, ZF), (X1, LY0, ZF), (X0, LY0, ZF)], SHELL, normal=(0, 0, 1))
+left = ([(0, UY1)] + arc(UX0 + UR, UY1 - UR, UR, 90, 180, 2)
+        + [(UX0, UY0), (LX0, UY0), (LX0, LY0), (X0, LY0)]
+        + arc(X0 + R, H - R, R, 180, 90, 2) + [(0, H)])
+right = [(-x, y) for x, y in left]
+m.polygon([(x, y, ZF) for x, y in left], SHELL, normal=(0, 0, 1))
+m.polygon([(x, y, ZF) for x, y in right], SHELL, normal=(0, 0, 1))
 
-# raised rim around the label
-m.box(X0, 0, ZF, X1, LY0, ZR, SHELL, faces={'back': None})      # bottom band
-m.box(X0, LY0, ZF, LX0, LY1, ZR, SHELL, faces={'back': None})                   # left strip
-m.box(LX1, LY0, ZF, X1, LY1, ZR, SHELL, faces={'back': None})                   # right strip
-m.extrude_xy(top_outline(LY1), ZF, ZR, SHELL, back=False)                      # top band
+# ---- recess: walls (facing inwards) and floor
+n = len(RECESS_PTS)
+for i in range(n):
+    (xa, ya), (xb, yb) = RECESS_PTS[i], RECESS_PTS[(i + 1) % n]
+    # counter-clockwise outline: the inside is on the left, the wall faces it
+    m.polygon([(xa, ya, ZL), (xb, yb, ZL), (xb, yb, ZF), (xa, ya, ZF)], WALL, normal=(-(yb - ya), xb - xa, 0))
+m.polygon([(x, y, ZL) for x, y in RECESS_PTS], FLOOR, normal=(0, 0, 1))
 
-# grip band: a thicker strip along the rounded top, front and back
-GY = 4.25
-m.extrude_xy(top_outline(GY), ZR, ZR + 0.08, RIM, back=False)
-m.extrude_xy(top_outline(GY), ZB - 0.08, ZB, RIM, front=False)
-for i in range(4):
-    y = GY + 0.14 + i * 0.2
-    m.box(-2.4, y, ZR + 0.08, 2.4, y + 0.09, ZR + 0.14, GRIP, faces={'back': None})
-    m.polygon([(-2.4, y, ZB - 0.14), (-2.4, y + 0.09, ZB - 0.14), (2.4, y + 0.09, ZB - 0.14), (2.4, y, ZB - 0.14)],
-              GRIP, normal=(0, 0, -1))
+# ---- the label: the game's picture (rounded top corners like the real one)
+label = [(LX0, LY0), (LX1, LY0)] + arc(LX1 - LR, LY1 - LR, LR, 0, 90, 2) + arc(LX0 + LR, LY1 - LR, LR, 90, 180, 2)
+m.image_xy(LX0, LY0, LX1, LY1, ZL, fallback=LABEL, lift=0.03, outline=label)
 
-# label: paper, dark top strip, artwork window, title band
-m.decal_xy([(LX0 + 0.1, LY0 + 0.1), (LX1 - 0.1, LY0 + 0.1), (LX1 - 0.1, LY1 - 0.1), (LX0 + 0.1, LY1 - 0.1)], ZF, LABEL, lift=0.05)
-m.decal_xy([(LX0 + 0.25, LY1 - 0.7), (LX1 - 0.25, LY1 - 0.7), (LX1 - 0.25, LY1 - 0.25), (LX0 + 0.25, LY1 - 0.25)], ZF, TOPBAND, lift=0.08)
-m.decal_xy([(LX0 + 0.4, LY0 + 0.85), (LX1 - 0.4, LY0 + 0.85), (LX1 - 0.4, LY1 - 0.85), (LX0 + 0.4, LY1 - 0.85)], ZF, ART, lift=0.08)
-m.decal_xy([(LX0 + 0.4, LY0 + 0.3), (LX1 - 0.4, LY0 + 0.3), (LX1 - 0.4, LY0 + 0.62), (LX0 + 0.4, LY0 + 0.62)], ZF, BAND, lift=0.08)
+# ---- grip ribs in the U above the label
+for i in range(3):
+    y = 5.74 + i * 0.15
+    m.decal_xy([(-1.7, y), (1.7, y), (1.7, y + 0.07), (-1.7, y + 0.07)], ZL, GRIP, lift=0.03)
 
-
-# back: connector opening with gold contacts along the bottom edge
-def back_rect(x0, y0, x1, y1, z, col):
-    m.polygon([(x0, y0, z), (x0, y1, z), (x1, y1, z), (x1, y0, z)], col, normal=(0, 0, -1))
-
-
-back_rect(-2.9, 0.0, 2.9, 0.75, ZB - 0.02, RECESS)
-back_rect(-2.7, 0.08, 2.7, 0.55, ZB - 0.05, GOLD)
-for i in range(1, 12):
-    x = -2.7 + i * 5.4 / 12
-    back_rect(x - 0.04, 0.08, x + 0.04, 0.55, ZB - 0.08, RECESS)
+# ---- raised plain oval near the bottom edge (no lettering)
+OCX, OCY, ORX, ORY = 0.0, 0.8, 1.4, 0.37
+oval = [(OCX + ORX * math.cos(2 * math.pi * i / 12), OCY + ORY * math.sin(2 * math.pi * i / 12)) for i in range(12)]
+m.extrude_xy(oval, ZF, ZF + 0.02, OVAL, back=False, side=SHELL)
 
 
 if __name__ == '__main__':

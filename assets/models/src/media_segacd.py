@@ -1,157 +1,80 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sega CD game disc in its CD jewel case, standing upright, front to +Z.
+"""Sega CD game disc: a bare 12 cm CD standing upright, label side to +Z.
 
-Real size ~14.2 x 12.5 x 1.0 cm. Signature features: the clear case read as
-light grey edges and a raised frame around the front lid, the ridged hinge
-strip down the left side of the lid, the black tray seen through the lid,
-the silver 12 cm disc with a coloured label ring, clear hub and centre hole,
-the red cover band across the top of the front (the system's header
-stripe) with a thin white line, and the dark spine on the left edge.
+Real size (ECMA-130 / Red Book): 12.0 cm across, 1.2 mm thick, 1.5 cm
+centre hole, clear centre (clamping area, stacking ring) out to ~4.2 cm
+across. Seen from the label side: the clear hub around the hole (it reads
+dark, being see-through), a narrow bright silver band (the
+metal layer under the lacquer, between hub and print), the printed label
+(the game's picture) out to ~11.7 cm and a thin silver rim at the edge.
+The underside is plain silver with the same clear hub.
+
+Layout: centre at (0, 6, 0); the lowest outer vertex touches y = 0. The
+disc body runs z = -0.07 .. +0.05 (1.2 mm); the picture is a ring lifted
+0.02 cm off the label side (z = +0.07), so the whole model spans
+12.0 x 12.0 x 0.14 cm. The insertion (console tray, label side up) is
+in assets/models/systems/segacd.json, made with the console.
 """
 import math
-import os, sys
+import os
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-CLEAR = (178, 190, 204)      # clear plastic edges / lid frame
-HINGE = (214, 222, 232)      # hinge strip (thicker clear plastic, catches light)
-HINGE_D = (120, 132, 148)    # hinge ridges
-TRAY = (22, 22, 28)          # black tray seen through the lid
-SILVER = (226, 230, 238)     # disc surface
-LABEL = (40, 96, 210)        # disc label ring
-LABEL2 = (240, 200, 60)      # thin accent ring on the label
-HUB = (128, 136, 150)        # clear hub of the disc
-HOLE = (10, 10, 14)          # centre hole
-RED = (206, 28, 36)          # cover header band
-WHITE = (240, 240, 240)      # thin line under the band
-SPINE = (36, 36, 44)         # spine / back insert
-BACK = (70, 74, 86)          # back insert artwork area
+LABEL = (40, 40, 50)          # picture fallback: the dark printed label
+SILVER_F = (218, 222, 232)    # label side: lacquered metal band and outer rim
+SILVER_B = (206, 212, 226)    # underside (read side): silver mirror
+HUB = (104, 110, 122)         # clear polycarbonate hub (reads dark: see-through)
+EDGE = (156, 166, 184)        # clear outer edge of the disc
+HOLE = (70, 76, 90)           # inside wall of the centre hole
 
-W, H = 14.2, 12.5
-X0, X1 = -W / 2, W / 2
-ZB, ZF = -0.5, 0.42          # case body back / front face (tray behind lid)
-ZL = 0.5                     # raised lid frame / hinge front
-HW = 1.0                     # hinge strip width on the left
+R = 6.0                       # outer radius
+R_HOLE = 0.75                 # 1.5 cm centre hole
+R_HUB = 2.1                   # clear centre area (metal layer starts here)
+R_LAB0, R_LAB1 = 2.3, 5.85    # printed label ring
+CY = R                        # centre height: lowest vertex on y = 0
+ZB, ZF = -0.07, 0.05          # underside / label side (1.2 mm)
+LIFT = 0.02                   # picture above the label side
+
+N = 24                        # outer segments (vertex straight down)
+NH = 12                       # hub and hole segments
 
 m = Model('segacd', 'media')
 
-# Every flat face is tiled without overlapping decals: big stacked decals
-# z-fight under the affine depth of a software rasteriser.
 
-F = 0.35                     # width of the raised lid frame
-XA, XB = X0 + HW, X1 - F     # lid opening (inside the frame)
-YA, YB = F, H - F
-BY = H - 2.6                 # bottom of the red cover band
-YC = BY - 0.22               # bottom of the white line = top of the disc window
+def pt(r, i, n, z):
+    a = -math.pi / 2 + 2 * math.pi * i / n
+    return (r * math.cos(a), CY + r * math.sin(a), z)
 
 
-def front_rect(x0, y0, x1, y1, z, color):
-    m.quad((x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z), color)
+def ring(r0, n0, r1, n1, z, color, normal):
+    """Flat annulus r0 (n0 segments) .. r1 (n1 = n0 or 2 * n0 segments)."""
+    k = n1 // n0
+    for i in range(n0):
+        outer = [pt(r1, k * i + j, n1, z) for j in range(k + 1)]
+        m.polygon([pt(r0, i, n0, z), pt(r0, i + 1, n0, z)] + outer[::-1], color, normal=normal)
 
 
-def back_rect(x0, y0, x1, y1, z, color):
-    m.quad((x1, y0, z), (x0, y0, z), (x0, y1, z), (x1, y1, z), color)
+def wall(r, n, color, outward):
+    for i in range(n):
+        a = -math.pi / 2 + 2 * math.pi * (i + 0.5) / n
+        d = 1 if outward else -1
+        m.polygon([pt(r, i, n, ZB), pt(r, i + 1, n, ZB), pt(r, i + 1, n, ZF), pt(r, i, n, ZF)],
+                  color, normal=(d * math.cos(a), d * math.sin(a), 0))
 
 
-def clip_below(poly, yc):
-    """Sutherland-Hodgman: keep the part of a 2D polygon with y <= yc."""
-    out = []
-    for i in range(len(poly)):
-        p, q = poly[i], poly[(i + 1) % len(poly)]
-        pin, qin = p[1] <= yc, q[1] <= yc
-        if pin:
-            out.append(p)
-        if pin != qin:
-            t = (yc - p[1]) / (q[1] - p[1])
-            out.append((p[0] + t * (q[0] - p[0]), yc))
-    return out
+# label side (+Z): clear hub, silver from hub to edge; the picture lies on it
+ring(R_HOLE, NH, R_HUB, NH, ZF, HUB, (0, 0, 1))
+ring(R_HUB, NH, R, N, ZF, SILVER_F, (0, 0, 1))
+# underside (-Z): clear hub, silver mirror
+ring(R_HOLE, NH, R_HUB, NH, ZB, HUB, (0, 0, -1))
+ring(R_HUB, NH, R, N, ZB, SILVER_B, (0, 0, -1))
+# outer edge and the centre hole's wall
+wall(R, N, EDGE, True)
+wall(R_HOLE, NH, HOLE, False)
 
-
-def front_poly(pts, color):
-    pts = clip_below(pts, YC)
-    if len(pts) >= 3:
-        m.polygon([(x, y, ZF) for x, y in pts], color, normal=(0, 0, 1))
-
-
-# case body: clear right side, top and bottom (front, back and spine tiled below)
-m.box(X0, 0, ZB, X1, H, ZF, CLEAR, faces={'front': None, 'back': None, 'left': None})
-
-# raised lid frame: one U-shaped extrusion (top, right, bottom edges)
-m.extrude_xy([(XA, H), (XA, YB), (XB, YB), (XB, YA), (XA, YA), (XA, 0), (X1, 0), (X1, H)],
-             ZF, ZL, CLEAR, back=False)
-
-# hinge strip down the left edge, a little prouder, with ridges near both ends
-m.box(X0, 0, ZF, X0 + HW, H, ZL + 0.06, HINGE, faces={'back': None})
-for y in (0.8, H - 1.3):
-    m.decal_xy([(X0 + 0.18, y), (X0 + HW - 0.18, y), (X0 + HW - 0.18, y + 0.5), (X0 + 0.18, y + 0.5)],
-               ZL + 0.06, HINGE_D, lift=0.03)
-
-# cover band and white line across the top of the lid opening
-front_rect(XA, BY, XB, YB, ZF, RED)
-front_rect(XA, YC, XB, BY, ZF, WHITE)
-
-# disc window: concentric rings on the black tray, clipped under the band
-N = 16
-DCX, DCY = (XA + XB) / 2, H / 2
-
-
-def ring_pt(r, i, n=N):
-    a = 2 * math.pi * i / n + math.pi / N
-    return (DCX + r * math.cos(a), DCY + r * math.sin(a))
-
-
-RINGS = [(5.85, SILVER), (4.3, LABEL), (2.35, LABEL2), (1.95, HUB)]
-for k, (r, col) in enumerate(RINGS):
-    if k + 1 < len(RINGS):
-        ri = RINGS[k + 1][0]
-        for i in range(N):
-            front_poly([ring_pt(ri, i), ring_pt(ri, i + 1), ring_pt(r, i + 1), ring_pt(r, i)], col)
-    else:
-        # clear hub between the 16-gon and an 8-gon centre hole
-        RH = 0.75
-        for j in range(N // 2):
-            front_poly([ring_pt(RH, j, N // 2), ring_pt(RH, j + 1, N // 2),
-                        ring_pt(r, 2 * j + 2), ring_pt(r, 2 * j + 1), ring_pt(r, 2 * j)], col)
-        front_poly([ring_pt(RH, j, N // 2) for j in range(N // 2)], HOLE)
-
-# black tray around the disc: one piece per disc segment out to the window edge
-CORNERS = [(XB, YB), (XA, YB), (XA, YA), (XB, YA)]
-CORNER_A = [math.atan2(cy - DCY, cx - DCX) % (2 * math.pi) for cx, cy in CORNERS]
-
-
-def rect_hit(i):
-    a = 2 * math.pi * i / N + math.pi / N
-    dx, dy = math.cos(a), math.sin(a)
-    ts = []
-    if dx > 1e-9: ts.append((XB - DCX) / dx)
-    if dx < -1e-9: ts.append((XA - DCX) / dx)
-    if dy > 1e-9: ts.append((YB - DCY) / dy)
-    if dy < -1e-9: ts.append((YA - DCY) / dy)
-    t = min(ts)
-    return (DCX + t * dx, DCY + t * dy), a % (2 * math.pi)
-
-
-R0 = RINGS[0][0]
-for i in range(N):
-    (p0, a0), (p1, a1) = rect_hit(i), rect_hit(i + 1)
-    if a1 < a0:
-        a1 += 2 * math.pi
-    mids = sorted((ca if ca >= a0 else ca + 2 * math.pi, c) for ca, c in zip(CORNER_A, CORNERS))
-    mids = [c for ca, c in mids if a0 < ca < a1]
-    front_poly([ring_pt(R0, i), p0] + mids + [p1, ring_pt(R0, i + 1)], TRAY)
-
-# back insert, tiled: artwork panel, red band, dark surround
-back_rect(X0, 0, X1, 0.9, ZB, SPINE)
-back_rect(X0, 0.9, X0 + 1.2, H - 3.0, ZB, SPINE)
-back_rect(X0 + 1.2, 0.9, X1 - 0.7, H - 3.0, ZB, BACK)
-back_rect(X1 - 0.7, 0.9, X1, H - 3.0, ZB, SPINE)
-back_rect(X0, H - 3.0, X1, H - 2.4, ZB, SPINE)
-back_rect(X0, H - 2.4, X1, H - 0.6, ZB, RED)
-back_rect(X0, H - 0.6, X1, H, ZB, SPINE)
-
-# spine (left edge), with the red band continuing round it
-for y0, y1, col in ((0, H - 2.4, SPINE), (H - 2.4, H - 0.6, RED), (H - 0.6, H, SPINE)):
-    m.quad((X0, y0, ZB), (X0, y0, ZF), (X0, y1, ZF), (X0, y1, ZB), col)
+# the printed label = the game's picture, upright (u = left to right, v = up)
+m.image_ring(0, CY, ZF + LIFT, R_LAB0, R_LAB1, segments=N, fallback=LABEL)
 
 print(m.stats())
 m.save()

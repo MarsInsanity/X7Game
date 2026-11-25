@@ -1,32 +1,41 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Atari 7800 cartridge: black, 2600-sized shell (8.1 x 8.7 x 1.9 cm) standing
-upright, label to +Z, connector edge at y = 0. Signature details: the sloped
-top-front bevel with an end label, the big framed front label with the
-console's red / orange stripes, grip ribs on the upper sides and the ribbed
-lower front and back."""
+"""Atari 7800 ProSystem cartridge: plain black shell (8.1 x 10.2 x 2.0 cm)
+standing upright, label to +Z, connector edge at y = 0.
+
+Reference photos (Wikimedia Commons, carts in a 7800): the part that stays
+above the console is plain, smooth black plastic with a white end label
+across the top edge; the picture label sits on the lower front, in a shallow
+recess, and disappears into the slot. Details: the chamfered top-front edge
+carrying the end label (white, red title bar), the recessed front label (the
+game's picture), the connector opening in the bottom with the board edge.
+
+Insertion: straight down into the 7800's top slot, label to the front. The
+whole shell is one closed box 8.1 x 10.2 x 2.0 cm (x +-4.05, z +-1.0);
+nothing sticks out of it (the label and its picture are recessed)."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (36, 36, 40)        # black plastic, front / back
-SIDE = (60, 60, 66)         # side walls, top
-RIB = (92, 92, 100)         # grip ribs
-SLOT = (12, 12, 14)         # connector opening
-SILVER = (188, 192, 200)    # label frame / end label
-BAND = (18, 18, 20)         # black title band
-RED = (208, 40, 32)
-ORANGE = (240, 148, 32)
-BLUE = (56, 100, 208)       # picture area
-GREEN = (48, 150, 72)       # picture ground
-YELLOW = (240, 208, 64)     # picture accent
+SHELL = (30, 30, 34)        # black plastic, front / back
+SIDE = (64, 64, 72)         # side walls and top, so the outline reads
+RECESS = (14, 14, 16)       # label recess walls / floor
+SLOT = (8, 8, 10)           # connector opening
+PCB = (40, 110, 60)         # board edge
+GOLD = (216, 176, 64)       # contacts
+WHITE = (228, 228, 232)     # end label
+RED = (200, 36, 32)         # end label title bar
+TEXT = (96, 96, 104)        # end label small print
+LABEL = (190, 190, 198)     # picture fallback: plain silver label
 
-W, H = 8.1, 8.7
+W, H, D = 8.1, 10.2, 2.0
 hw = W / 2
-ZF, ZB = 0.95, -0.95        # front / back
-YB = 7.55                   # where the top-front bevel starts
-ZT = 0.30                   # front edge of the flat top
-lx, ly0, ly1 = 3.4, 1.75, 7.25    # label on the front
-ZL = ZF + 0.07              # label surface
+ZF, ZB = D / 2, -D / 2
+BV = 0.55                   # top-front chamfer
+YB, ZT = H - BV, ZF - BV    # chamfer: from (ZF, YB) up to (ZT, H)
+LX, L0, L1 = 3.5, 0.7, 6.1  # front label recess: x +-LX, y L0..L1
+ZR = ZF - 0.1               # recess floor
+EX = 3.55                   # end label half width
+SX, SZ, SD = 3.3, 0.5, 0.6  # connector opening: x +-SX, z +-SZ, depth SD
 
 m = Model('atari7800', 'media')
 polys = []                  # (points, colour, normal): T-junctions fixed at the end
@@ -36,24 +45,30 @@ def rect_xy(x0, y0, x1, y1, z, color, nz=1):
     polys.append(([(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)], color, (0, 0, nz)))
 
 
+def rect_xz(x0, z0, x1, z1, y, color, ny=1):
+    polys.append(([(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)], color, (0, ny, 0)))
+
+
 # ---------------------------------------------------------------- shell
-# side walls (profile in z, y)
-prof = [(ZB, 0), (ZF, 0), (ZF, YB), (ZT, H), (ZB, H)]
+prof = [(ZB, 0), (ZF, 0), (ZF, YB), (ZT, H), (ZB, H)]       # side profile (z, y)
 polys.append(([(hw, y, z) for z, y in prof], SIDE, (1, 0, 0)))
 polys.append(([(-hw, y, z) for z, y in prof], SIDE, (-1, 0, 0)))
-# back, top, bottom
-rect_xy(-hw, 0, hw, H, ZB, SHELL, -1)
-polys.append(([(-hw, H, ZB), (hw, H, ZB), (hw, H, ZT), (-hw, H, ZT)], SIDE, (0, 1, 0)))
-sx = 3.0
-for x0, x1, c in ((-hw, -sx, SHELL), (-sx, sx, SLOT), (sx, hw, SHELL)):
-    polys.append(([(x0, 0, ZB), (x1, 0, ZB), (x1, 0, ZF), (x0, 0, ZF)], c, (0, -1, 0)))
-# front, tiled around the label
-rect_xy(-hw, 0, hw, ly0, ZF, SHELL)
-rect_xy(-hw, ly1, hw, YB, ZF, SHELL)
-rect_xy(-hw, ly0, -lx, ly1, ZF, SHELL)
-rect_xy(lx, ly0, hw, ly1, ZF, SHELL)
-# bevel with the end label (silver with a red / orange stripe)
-bn = (0, ZF - ZT, H - YB)   # bevel normal, pointing up and forward
+rect_xy(-hw, 0, hw, H, ZB, SHELL, -1)                       # back
+
+# front, tiled around the label recess
+rect_xy(-hw, 0, hw, L0, ZF, SHELL)
+rect_xy(-hw, L1, hw, YB, ZF, SHELL)
+rect_xy(-hw, L0, -LX, L1, ZF, SHELL)
+rect_xy(LX, L0, hw, L1, ZF, SHELL)
+# recess walls (facing into the recess) and floor
+polys.append(([(-LX, L0, ZF), (-LX, L0, ZR), (LX, L0, ZR), (LX, L0, ZF)], RECESS, (0, 1, 0)))
+polys.append(([(-LX, L1, ZF), (LX, L1, ZF), (LX, L1, ZR), (-LX, L1, ZR)], RECESS, (0, -1, 0)))
+polys.append(([(-LX, L0, ZF), (-LX, L1, ZF), (-LX, L1, ZR), (-LX, L0, ZR)], RECESS, (1, 0, 0)))
+polys.append(([(LX, L0, ZF), (LX, L0, ZR), (LX, L1, ZR), (LX, L1, ZF)], RECESS, (-1, 0, 0)))
+rect_xy(-LX, L0, LX, L1, ZR, RECESS)
+
+# top-front chamfer and top: the end label wraps over both
+bn = (0, ZF - ZT, H - YB)
 
 
 def bevel(x0, t0, x1, t1, color):
@@ -62,37 +77,31 @@ def bevel(x0, t0, x1, t1, color):
     polys.append(([p(x0, t0), p(x1, t0), p(x1, t1), p(x0, t1)], color, bn))
 
 
-ex = lx
-bevel(-hw, 0, -ex, 1, SHELL)
-bevel(ex, 0, hw, 1, SHELL)
-bevel(-ex, 0.0, ex, 0.12, SHELL)
-bevel(-ex, 0.12, ex, 0.45, SILVER)
-bevel(-ex, 0.45, ex, 0.60, RED)
-bevel(-ex, 0.60, ex, 0.88, SILVER)
-bevel(-ex, 0.88, ex, 1.0, SHELL)
+bevel(-hw, 0, -EX, 1, SIDE)
+bevel(EX, 0, hw, 1, SIDE)
+bevel(-EX, 0, EX, 0.3, WHITE)          # the title (red) faces the player
+bevel(-EX, 0.3, EX, 0.68, RED)
+bevel(-EX, 0.68, EX, 1, WHITE)
+t0, t1 = ZT - 0.3, ZT - 0.5            # a dark text line on the top face
+t2 = ZB + 0.2                          # back edge of the end label
+for x0, x1 in ((-hw, -EX), (EX, hw)):
+    rect_xz(x0, ZB, x1, ZT, H, SIDE)
+rect_xz(-EX, ZB, EX, t2, H, SIDE)
+rect_xz(-EX, t2, EX, t1, H, WHITE)
+rect_xz(-EX, t1, EX, t0, H, TEXT)
+rect_xz(-EX, t0, EX, ZT, H, WHITE)
 
-# ---------------------------------------------------------------- label
-# raised slab sides
-lab = [(-lx, ly0), (lx, ly0), (lx, ly1), (-lx, ly1)]
-m.extrude_xy(lab, ZF, ZL, SILVER, front=False, back=False, side=SIDE)
-ax = lx - 0.3
-sx0, sx1 = 1.4, 2.3
-rows = [
-    (ly0, 2.05, [(-lx, lx, SILVER)]),
-    (2.05, 2.85, [(-lx, -ax, SILVER), (-ax, ax, GREEN), (ax, lx, SILVER)]),
-    (2.85, 4.45, [(-lx, -ax, SILVER), (-ax, ax, BLUE), (ax, lx, SILVER)]),
-    (4.45, 5.25, [(-lx, -ax, SILVER), (-ax, sx0, BLUE), (sx0, sx1, YELLOW), (sx1, ax, BLUE), (ax, lx, SILVER)]),
-    (5.25, 5.55, [(-lx, -ax, SILVER), (-ax, ax, BLUE), (ax, lx, SILVER)]),
-    (5.55, 5.85, [(-lx, lx, SILVER)]),
-    (5.85, 6.15, [(-lx, -ax, SILVER), (-ax, ax, BAND), (ax, lx, SILVER)]),
-    (6.15, 6.35, [(-lx, -ax, SILVER), (-ax, ax, ORANGE), (ax, lx, SILVER)]),
-    (6.35, 6.55, [(-lx, -ax, SILVER), (-ax, ax, RED), (ax, lx, SILVER)]),
-    (6.55, 6.95, [(-lx, -ax, SILVER), (-ax, ax, BAND), (ax, lx, SILVER)]),
-    (6.95, ly1, [(-lx, lx, SILVER)]),
-]
-for y0, y1, cells in rows:
-    for x0, x1, c in cells:
-        rect_xy(x0, y0, x1, y1, ZL, c)
+# bottom, tiled around the connector opening
+rect_xz(-hw, ZB, hw, -SZ, 0, SHELL, -1)
+rect_xz(-hw, SZ, hw, ZF, 0, SHELL, -1)
+rect_xz(-hw, -SZ, -SX, SZ, 0, SHELL, -1)
+rect_xz(SX, -SZ, hw, SZ, 0, SHELL, -1)
+# the opening: a dark pocket
+polys.append(([(-SX, 0, -SZ), (SX, 0, -SZ), (SX, SD, -SZ), (-SX, SD, -SZ)], SLOT, (0, 0, 1)))
+polys.append(([(-SX, 0, SZ), (-SX, SD, SZ), (SX, SD, SZ), (SX, 0, SZ)], SLOT, (0, 0, -1)))
+polys.append(([(-SX, 0, -SZ), (-SX, SD, -SZ), (-SX, SD, SZ), (-SX, 0, SZ)], SLOT, (1, 0, 0)))
+polys.append(([(SX, 0, -SZ), (SX, 0, SZ), (SX, SD, SZ), (SX, SD, -SZ)], SLOT, (-1, 0, 0)))
+rect_xz(-SX, -SZ, SX, SZ, SD, SLOT, -1)
 
 # ---------------------------------------------------------------- emit panels
 # insert every panel corner that lies on another panel's edge, so the
@@ -124,19 +133,14 @@ for pts, c, n in polys:
         out += [p for _, p in sorted(mids)]
     m.polygon(out, c, normal=n)
 
-# ---------------------------------------------------------------- ribs
-# grip ribs across the upper sides
-for i in range(3):
-    y = 4.9 + i * 0.75
-    for s in (-1, 1):
-        x0, x1 = (hw, hw + 0.12) if s > 0 else (-hw - 0.12, -hw)
-        f = {'bottom': None, ('left' if s > 0 else 'right'): None}
-        m.box(x0, y, -0.7, x1, y + 0.28, 0.7, RIB, faces=f)
-# ribbed lower front, under the label
-for i in range(3):
-    y = 0.35 + i * 0.42
-    m.box(-lx, y, ZF, lx, y + 0.2, ZF + 0.1, SIDE, faces={'back': None, 'bottom': None})
-    m.box(-lx, y, ZB - 0.1, lx, y + 0.2, ZB, SIDE, faces={'front': None, 'bottom': None})
+# ---------------------------------------------------------------- picture
+# the whole front label is the game's picture (upright, u left to right)
+m.image_xy(-LX, L0, LX, L1, ZR, fallback=LABEL, lift=0.03)
+
+# ---------------------------------------------------------------- board edge
+# the circuit board in the connector opening, contacts along its edge
+PX, PT = 3.1, 0.08
+m.box(-PX, 0.12, -PT, PX, SD, PT, PCB, faces={'top': None, 'bottom': GOLD})
 
 print(m.stats())
 print(m.save())

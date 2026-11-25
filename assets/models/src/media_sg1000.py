@@ -1,106 +1,102 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Sega SG-1000 cartridge: a squat, landscape black cartridge standing upright,
-label to +Z, edge connector at y = 0. Signature details: glossy black shell,
-a thicker capped top edge with a chamfered front, a big framed label (header
-band + picture + stripe), grip ridges on the cap, exposed board at the bottom."""
+"""Sega SG-1000 / SC-3000 cartridge (1983): a portrait, slab-shaped black
+cartridge standing upright, label to +Z, open connector end at y = 0.
+
+From photos of the real thing: a plain black shell about 8.4 x 11.0 x 1.7 cm,
+taller than wide; a big label (the game's picture) across the top ~57 % of
+the front, starting right at the top edge with thin black margins at the
+sides; grip ribs across the upper part of both side walls; a seam along the
+sides; the bottom end open, the bare circuit board with its contacts set a
+little way inside the shell; a darker groove across the back.
+
+Insertion: goes straight DOWN into the SG-1000's top slot, label to the
+front. The shell is a plain box (8.4 wide, 1.7 deep) from y = 0 up; only the
+grip ribs (y 6.7 to 10.6) stick out 0.1 cm from the side walls.
+"""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (36, 36, 42)        # black plastic
-CAP = (58, 58, 66)          # top cap (slightly lighter so it reads)
-RIDGE = (104, 104, 112)       # grip ridges
-FRAME = (226, 226, 230)     # white label frame
-HEAD = (208, 32, 40)        # red header band
-LOGO = (250, 250, 250)      # plain white box in the header
-SKY = (56, 120, 216)        # picture: sky
-GROUND = (48, 168, 72)      # picture: ground
-SUN = (248, 168, 40)        # picture accent
-STRIPE = (240, 208, 40)     # yellow stripe under the picture
-STICK = (150, 150, 156)     # back sticker
-PCB = (32, 104, 56)
-GOLD = (216, 176, 64)
+SHELL = (30, 30, 34)        # black plastic
+RIB = (70, 70, 78)          # grip ribs (lighter so they read)
+SEAM = (12, 12, 14)         # seam line / back groove
+HOLE = (8, 8, 10)           # inside of the open connector end
+BOARD = (214, 204, 164)     # pale circuit board
+CONTACT = (150, 136, 92)    # contact fingers
+LABEL = (226, 222, 204)     # plain label colour (picture fallback)
 
-W, H = 10.6, 8.2
-hw = W / 2
-ZF, ZB = 0.85, -0.85        # main shell front / back
-CY = 6.8                    # bottom of the top cap
-CZ = 1.0                    # cap half depth (sticks out 0.15 front and back)
-NX, NY = 4.2, 0.6           # connector notch half width / height
-lx, ly0, ly1 = 4.75, 0.95, 6.55     # label on the front
-sx0, sy0, sx1, sy1 = -3.6, 1.6, 3.6, 5.6   # sticker on the back
+W, H, D = 8.4, 11.0, 1.7
+hw, hd = W / 2, D / 2
+ZF, ZB = hd, -hd
+# label = picture area on the front
+LX0, LX1 = -hw + 0.65, hw - 0.65
+LY0, LY1 = 4.5, H - 0.2
+# open end: wall thickness, cavity height, board
+WALL = 0.22
+CAV = 0.8
+BX, BZ, BY0 = hw - 0.45, 0.08, 0.18
+# grip ribs on the side walls
+RIB0, RIB1, NRIB, RT = 6.7, 10.6, 9, 0.1
 
 m = Model('sg1000', 'media')
 
 
-def face(pts, z, color, nz):
-    return m.polygon([(x, y, z) for x, y in pts], color, normal=(0, 0, nz))
+def rect_xy(x0, y0, x1, y1, z, color, nz=1):
+    return m.polygon([(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)], color, normal=(0, 0, nz))
 
 
-def rect(x0, y0, x1, y1, z, color, nz=1):
-    return face([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], z, color, nz)
+def rect_xz(x0, z0, x1, z1, y, color, ny=1):
+    return m.polygon([(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)], color, normal=(0, ny, 0))
 
 
-# ---- main shell (below the cap), connector notch cut into the bottom
-outline = [(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, CY), (-hw, CY)]
-m.extrude_xy(outline, ZB, ZF, SHELL, front=False, back=False, side=SHELL)
-# front tiled around the label
-face([(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, ly0), (-hw, ly0)], ZF, SHELL, 1)
-rect(-hw, ly1, hw, CY, ZF, SHELL)
-rect(-hw, ly0, -lx, ly1, ZF, SHELL)
-rect(lx, ly0, hw, ly1, ZF, SHELL)
-# back tiled around the sticker
-face([(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, sy0), (-hw, sy0)], ZB, SHELL, -1)
-rect(-hw, sy1, hw, CY, ZB, SHELL, -1)
-rect(-hw, sy0, sx0, sy1, ZB, SHELL, -1)
-rect(sx1, sy0, hw, sy1, ZB, SHELL, -1)
-rect(sx0, sy0, sx1, sy1, ZB, STICK, -1)
+# ---- shell: front tiled around the label, plain back, sides, top
+rect_xy(-hw, 0, hw, LY0, ZF, SHELL)
+rect_xy(-hw, LY1, hw, H, ZF, SHELL)
+rect_xy(-hw, LY0, LX0, LY1, ZF, SHELL)
+rect_xy(LX1, LY0, hw, LY1, ZF, SHELL)
+m.box(-hw, 0, ZB, hw, H, ZF, SHELL, faces={'front': None, 'bottom': None})
+# bottom end: a frame around the opening
+ix, iz = hw - WALL, hd - WALL
+rect_xz(-hw, -hd, hw, -iz, 0, SHELL, -1)
+rect_xz(-hw, iz, hw, hd, 0, SHELL, -1)
+rect_xz(-hw, -iz, -ix, iz, 0, SHELL, -1)
+rect_xz(ix, -iz, hw, iz, 0, SHELL, -1)
+# cavity inside the opening (walls face inwards, ceiling faces down)
+m.quad((-ix, 0, -iz), (ix, 0, -iz), (ix, CAV, -iz), (-ix, CAV, -iz), HOLE)       # back wall, faces +Z
+m.quad((ix, 0, iz), (-ix, 0, iz), (-ix, CAV, iz), (ix, CAV, iz), HOLE)           # front wall, faces -Z
+m.quad((-ix, 0, iz), (-ix, 0, -iz), (-ix, CAV, -iz), (-ix, CAV, iz), HOLE)       # left wall, faces +X
+m.quad((ix, 0, -iz), (ix, 0, iz), (ix, CAV, iz), (ix, CAV, -iz), HOLE)           # right wall, faces -X
+rect_xz(-ix, -iz, ix, iz, CAV, HOLE, -1)                                         # ceiling
+# circuit board hanging from the ceiling, contacts on both faces
+m.box(-BX, BY0, -BZ, BX, CAV, BZ, BOARD, faces={'top': None})
+m.decal_xy([(-BX + 0.3, BY0 + 0.04), (BX - 0.3, BY0 + 0.04), (BX - 0.3, CAV - 0.12), (-BX + 0.3, CAV - 0.12)],
+           BZ, CONTACT)
+m.polygon([(BX - 0.3, BY0 + 0.04, -BZ - 0.02), (-BX + 0.3, BY0 + 0.04, -BZ - 0.02),
+           (-BX + 0.3, CAV - 0.12, -BZ - 0.02), (BX - 0.3, CAV - 0.12, -BZ - 0.02)], CONTACT, normal=(0, 0, -1))
 
-# ---- top cap: thicker, chamfered along the top front and back edges
-prof = [(-CZ, CY), (CZ, CY), (CZ, 7.7), (CZ - 0.35, H), (-CZ + 0.35, H), (-CZ, 7.7)]
-m.extrude_yz(prof, -hw, hw, CAP)
-# grip ridges along the cap front
-for i in range(3):
-    y = 7.0 + i * 0.22
-    m.box(-hw + 0.5, y, CZ, hw - 0.5, y + 0.1, CZ + 0.08, RIDGE, faces={'back': None})
+# ---- grip ribs: triangular ridges running front to back on both side walls
+step = (RIB1 - RIB0) / NRIB
+for i in range(NRIB):
+    y0 = RIB0 + i * step + step * 0.15
+    y1 = y0 + step * 0.7
+    ym = (y0 + y1) / 2
+    for s in (1, -1):
+        x0, x1 = s * hw, s * (hw + RT)
+        prof = [(x0, y0), (x1, ym), (x0, y1)]
+        m.extrude_xy(prof, ZB + 0.15, ZF - 0.15, RIB)
 
-# ---- circuit board in the notch, gold contacts on its front
-m.box(-NX + 0.05, 0.0, -0.1, NX - 0.05, NY, 0.1, PCB, faces={'top': None})
-m.decal_xy([(-NX + 0.35, 0.06), (NX - 0.35, 0.06), (NX - 0.35, NY - 0.1), (-NX + 0.35, NY - 0.1)], 0.1, GOLD)
+# ---- seam along both side walls (below the ribs) and a groove across the back
+for s in (1, -1):
+    x = s * (hw + 0.02)
+    pts = [(x, 0.3, 0.05), (x, 0.3, -0.05), (x, RIB0 - 0.2, -0.05), (x, RIB0 - 0.2, 0.05)]
+    m.polygon(pts, SEAM, normal=(s, 0, 0))
+m.polygon([(hw - 0.3, 4.5, ZB - 0.02), (-hw + 0.3, 4.5, ZB - 0.02), (-hw + 0.3, 4.9, ZB - 0.02),
+           (hw - 0.3, 4.9, ZB - 0.02)], SEAM, normal=(0, 0, -1))
 
-# ---- label: thin raised slab, its face tiled into frame + design pieces
-ZL = ZF + 0.06
-m.box(-lx, ly0, ZF, lx, ly1, ZL, FRAME, faces={'back': None, 'front': None})
-f = 0.25
-ix = lx - f
-iy0, iy1 = ly0 + f, ly1 - f
-st1 = iy0 + 0.45            # yellow stripe top
-gr1 = st1 + 1.2             # ground top
-sk1 = iy1 - 1.35            # sky top (a white gap, then the header)
-hd0 = sk1 + 0.2             # header bottom
-rect(-lx, ly0, lx, iy0, ZL, FRAME)
-rect(-lx, iy1, lx, ly1, ZL, FRAME)
-rect(-lx, iy0, -ix, iy1, ZL, FRAME)
-rect(ix, iy0, lx, iy1, ZL, FRAME)
-rect(-ix, iy0, ix, st1, ZL, STRIPE)
-# rolling hills against the sky, a sun in the upper right
-hills = [(ix, gr1 - 0.3), (ix - 1.6, gr1 + 0.35), (ix - 3.4, gr1 - 0.25), (ix - 5.6, gr1 + 0.75),
-         (-ix + 1.5, gr1 - 0.1), (-ix, gr1 + 0.4)]
-ux0, ux1, uy0, uy1 = ix - 2.0, ix - 1.0, sk1 - 1.1, sk1 - 0.3
-face([(-ix, st1), (ix, st1)] + hills, ZL, GROUND, 1)
-face(hills[::-1] + [(ix, uy0), (-ix, uy0)], ZL, SKY, 1)
-rect(-ix, uy1, ix, sk1, ZL, SKY)
-rect(-ix, uy0, ux0, uy1, ZL, SKY)
-rect(ux1, uy0, ix, uy1, ZL, SKY)
-rect(ux0, uy0, ux1, uy1, ZL, SUN)
-rect(-ix, sk1, ix, hd0, ZL, FRAME)
-# red header with a plain white box on the left
-bx0, bx1, by0, by1 = -ix + 0.3, -ix + 2.4, hd0 + 0.22, iy1 - 0.22
-rect(-ix, hd0, ix, by0, ZL, HEAD)
-rect(-ix, by1, ix, iy1, ZL, HEAD)
-rect(-ix, by0, bx0, by1, ZL, HEAD)
-rect(bx1, by0, ix, by1, ZL, HEAD)
-rect(bx0, by0, bx1, by1, ZL, LOGO)
+# ---- the label: a thin sticker on the front, its face the game's picture
+LT = 0.03
+m.box(LX0, LY0, ZF, LX1, LY1, ZF + LT, LABEL, faces={'front': None, 'back': None})
+m.image_xy(LX0, LY0, LX1, LY1, ZF, fallback=LABEL, lift=LT)
 
 print(m.stats())
 print(m.save())

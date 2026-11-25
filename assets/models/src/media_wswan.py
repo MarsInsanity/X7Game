@@ -1,24 +1,28 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """WonderSwan cartridge (black cart), standing upright, label to +Z.
 
-Real size ~4.4 x 6.3 x 0.65 cm (the grip end ~0.9 cm thick). Signature
-features: the small dark slab, the thicker grip end at the top with its
-horizontal finger ridges (the part that stays outside the console), the
-large recessed label that fills most of the front, the chamfered corners
-at the connector end, and the exposed edge contacts at the bottom of the
-back.
+Real size ~4.4 x 6.3 cm, the slab 0.65 cm thick, the grip end 0.9 cm.
+Signature features: the small dark slab, the thicker grip end at the top
+with its horizontal finger ridges (the part that stays outside the
+console), the large recessed label that fills most of the front (the
+game's picture), the chamfered corners at the connector end, and the
+exposed edge contacts at the bottom of the back.
+
+Insertion: the cart goes into the back of the console connector edge
+first (y = 0), label facing the back. The part that enters the slot is
+the slab: a closed prism x -2.2..2.2, y 0..5.2, z -0.30..0.35 with
+0.3 cm chamfers at the two bottom corners; the back carries only flat
+decals (0.02-0.04 cm), the label recess is inside the envelope.
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (60, 60, 70)         # black-ish shell (light enough to show shading)
-SHELL_L = (104, 104, 118)      # grip ridges
-SHELL_D = (24, 24, 30)       # connector opening
-LABEL = (236, 234, 226)      # label paper
-ART = (60, 150, 200)         # label artwork area
-ART2 = (240, 200, 60)        # artwork accent
-BAND = (200, 40, 50)         # title band
+SHELL = (58, 58, 68)         # black-ish shell (light enough to show shading)
+SHELL_L = (110, 110, 124)    # grip ridges
+SHELL_M = (84, 84, 96)       # moulded info area on the back
+SHELL_D = (20, 20, 26)       # connector opening
+LABEL = (236, 234, 226)      # label paper (fallback when there is no picture)
 GOLD = (226, 186, 70)        # contacts
 
 W, H = 4.4, 6.3
@@ -35,43 +39,37 @@ body = [(X0 + CH, 0), (X1 - CH, 0), (X1, CH), (X1, GY), (X0, GY), (X0, CH)]
 m.extrude_xy(body, ZB, ZF, SHELL)
 
 # raised rim around the label recess
-LX0, LX1, LY0, LY1 = -1.9, 1.9, 0.55, 4.95
+LX0, LX1, LY0, LY1 = -1.9, 1.9, 0.5, 5.0
 m.extrude_xy([(X0 + CH, 0), (X1 - CH, 0), (X1, CH), (X1, LY0), (X0, LY0), (X0, CH)],
              ZF, ZR, SHELL, back=False)                                              # bottom band
 m.box(X0, LY0, ZF, LX0, LY1, ZR, SHELL, faces={'back': None, 'bottom': None, 'top': None})
 m.box(LX1, LY0, ZF, X1, LY1, ZR, SHELL, faces={'back': None, 'bottom': None, 'top': None})
-m.box(X0, LY1, ZF, X1, GY, ZR, SHELL, faces={'back': None, 'top': None})               # top band
+m.box(X0, LY1, ZF, X1, GY, ZR, SHELL, faces={'back': None, 'top': None, 'bottom': None})
+# the recess' top wall (the bottom wall is the bottom band's side)
+m.quad((LX0, LY1, ZF), (LX1, LY1, ZF), (LX1, LY1, ZR), (LX0, LY1, ZR), SHELL)       # faces -Y
+
+# the label: the game's picture fills the whole recess
+m.image_xy(LX0, LY0, LX1, LY1, ZF, fallback=LABEL, lift=0.03)
 
 # grip end: thicker block with rounded top corners
 grip = Model.rounded_rect(X0, GY, X1, H, 0.35, segments=2)
-grip = [(x, y) for x, y in grip if y > GY - 1e-6]          # keep only the rounded top
 grip = [(X1, GY)] + [p for p in grip if p[1] > GY + 1e-6] + [(X0, GY)]
 m.extrude_xy(grip, GZB, GZF, SHELL)
 
 # finger ridges across the grip front
 for i in range(3):
-    y = GY + 0.18 + i * 0.3
+    y = GY + 0.17 + i * 0.3
     m.box(X0 + 0.3, y, GZF, X1 - 0.3, y + 0.14, GZF + 0.08, SHELL_L, faces={'back': None})
 
-# label: paper, artwork window, accent, title band
-m.decal_xy([(LX0 + 0.08, LY0 + 0.08), (LX1 - 0.08, LY0 + 0.08), (LX1 - 0.08, LY1 - 0.08), (LX0 + 0.08, LY1 - 0.08)], ZF, LABEL, lift=0.04)
-m.decal_xy([(LX0 + 0.3, LY0 + 0.95), (LX1 - 0.3, LY0 + 0.95), (LX1 - 0.3, LY1 - 0.3), (LX0 + 0.3, LY1 - 0.3)], ZF, ART, lift=0.08)
-m.decal_xy([(-0.9, LY0 + 1.3), (0.9, LY0 + 1.3), (0.2, LY0 + 2.6)], ZF, ART2, lift=0.11)
-m.decal_xy([(LX0 + 0.3, LY0 + 0.3), (LX1 - 0.3, LY0 + 0.3), (LX1 - 0.3, LY0 + 0.65), (LX0 + 0.3, LY0 + 0.65)], ZF, BAND, lift=0.08)
-
-# back: edge connector opening with gold contacts at the bottom
+# back: moulded info area and the edge connector with gold contacts (flat decals)
 def back_rect(x0, y0, x1, y1, z, col):
     m.polygon([(x0, y0, z), (x0, y1, z), (x1, y1, z), (x1, y0, z)], col, normal=(0, 0, -1))
 
-back_rect(-1.75, 0.0, 1.75, 0.75, ZB - 0.02, SHELL_D)
-back_rect(-1.6, 0.05, 1.6, 0.55, ZB - 0.05, GOLD)
-# raised back plate (moulded info area)
-m.box(-1.6, 1.3, ZB - 0.06, 1.6, 4.6, ZB, SHELL, faces={'front': None})
-back_rect(-1.3, 3.6, 1.3, 4.3, ZB - 0.08, SHELL_L)
-
-for i in range(1, 12):
-    x = -1.6 + i * 3.2 / 12
-    back_rect(x - 0.04, 0.05, x + 0.04, 0.55, ZB - 0.08, SHELL_D)
+back_rect(-1.6, 1.3, 1.6, 4.7, ZB - 0.02, SHELL_M)
+back_rect(-1.75, 0.06, 1.75, 0.75, ZB - 0.02, SHELL_D)
+for i in range(8):
+    x = -1.55 + i * 3.1 / 8
+    back_rect(x + 0.05, 0.12, x + 3.1 / 8 - 0.05, 0.6, ZB - 0.04, GOLD)
 
 if __name__ == '__main__':
     print(m.stats())

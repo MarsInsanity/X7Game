@@ -1,0 +1,16 @@
+{
+  "console": "../consoles/wswan.obj",
+  "media": "../media/wswan.obj",
+  "view": [-150, 28],
+  "parts": {
+    "switch": {"slide": [0, 0.4, 0]}
+  },
+  "path": [
+    {"pos": [0, 11.5, -0.085], "rot": [0, 180, 0]},
+    {"pos": [0, 2.23, -0.085], "rot": [0, 180, 0]}
+  ],
+  "steps": [
+    {"time": 0.9, "media": [0, 1]},
+    {"time": 0.25, "open": ["switch"]}
+  ]
+}

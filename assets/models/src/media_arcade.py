@@ -1,101 +1,106 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Generic arcade game board (PCB), low-poly.
+"""Generic arcade game board (JAMMA-style PCB), low-poly.
 
-Standing upright like on a shelf: component side facing +Z, the edge
-connector at y = 0. About 30 cm wide, 25 cm tall and 3 cm deep with the
-parts and stand-offs. Signature features: the green board with a darker
-edge, the gold edge-connector fingers on a tab along the bottom, a long
-CPU with silver pin rows, two labelled EPROMs, a square custom chip, a row
-of small logic chips, a red DIP-switch block, two blue electrolytic capacitors, a few lighter
-traces and the white nylon stand-offs at the four corners.
+Standing upright like on a shelf: component side facing +Z, the gold edge
+connector at y = 0. 30 cm wide, 25 cm tall (24 cm board + a 1 cm connector
+tab), the board 0.2 cm thick. Signature features, from photos of real
+boards (Donkey Kong, Gorf, Namco NA-1, Moon Patrol): the green solder-mask
+board with a darker edge, a protruding tab of gold fingers along the bottom
+edge with the key gap, a long 64-pin CPU with silver pin rows, two EPROMs
+with their silver quartz windows, a square custom chip with its pin skirt,
+rows of small black logic chips, blue electrolytic capacitors, a few
+lighter traces and white nylon stand-offs under the four corner holes.
+
+The game's sticker is the picture area (4:3, upper right of the board).
+
+Insertion: the board goes into the cabinet's back through a service door
+and slides flat onto a shelf, connector first. Laid flat (rot [-90, 0, 0])
+the component side faces up and the nylon stand-offs are its feet.
 """
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-GREEN = (24, 112, 56)         # board, solder mask
-EDGE = (10, 64, 30)           # board edges
-TRACE = (78, 160, 88)         # lighter copper traces under the mask
-GOLD = (230, 180, 44)         # edge-connector fingers
-CHIP = (30, 30, 34)           # chip tops
-CHIP_SIDE = (74, 74, 84)      # chip sides
-PIN = (178, 178, 188)         # pin rows, capacitor tops
-LABEL = (238, 234, 216)       # EPROM stickers
-CAP = (40, 70, 172)           # capacitor sleeves
-NYLON = (214, 206, 176)       # stand-offs
-RED = (204, 36, 36)           # DIP-switch block
+GREEN = (22, 118, 58)         # board, solder mask
+EDGE = (8, 58, 26)            # board edges, finger gaps
+TRACE = (92, 178, 104)        # lighter traces under the mask
+GOLD = (236, 184, 40)         # edge-connector fingers
+CHIP = (24, 24, 28)           # chip tops
+CHIP_SIDE = (70, 70, 80)      # chip sides
+PIN = (184, 184, 194)         # pin rows, EPROM windows, capacitor tops
+CAP = (36, 72, 186)           # capacitor sleeves
+NYLON = (232, 226, 200)       # stand-offs
+STICKER = (240, 236, 220)     # the game sticker (picture fallback)
 
 W2 = 15.0                     # half width
-ZF, ZB = 0.22, -0.22          # board faces (thicker than real, to read)
-TAB_Y = 1.6                   # edge-connector tab height
-TAB_X = 7.5                   # tab half width
+ZF, ZB = 0.1, -0.1            # board faces (2 mm board)
+TAB_Y = 1.0                   # edge-connector tab height
+TAB_X = 5.7                   # tab half width (28 fingers at 3.96 mm)
 H = 25.0
+POST_Z = -0.9                 # stand-offs reach this far behind the board
 
 m = Model('arcade', 'media')
 
-# ---- the board and its connector tab
+# ---- the board, and the connector tab below it
 m.box(-W2, TAB_Y, ZB, W2, H, ZF, GREEN,
-      faces={'left': EDGE, 'right': EDGE, 'top': EDGE, 'bottom': EDGE, 'back': None})
-# the back face in tiles: smaller triangles keep the parts on the front from
-# showing through when a renderer interpolates depth across a huge triangle
-XS = [-W2, 0.0, W2]
-YS = [TAB_Y, 13.0, H]
-for i in range(len(XS) - 1):
-    for j in range(len(YS) - 1):
-        m.quad((XS[i + 1], YS[j], ZB), (XS[i], YS[j], ZB), (XS[i], YS[j + 1], ZB), (XS[i + 1], YS[j + 1], ZB), GREEN)
+      faces={'left': EDGE, 'right': EDGE, 'top': EDGE, 'bottom': EDGE})
 m.box(-TAB_X, 0.0, ZB, TAB_X, TAB_Y, ZF, GOLD,
       faces={'top': None, 'left': EDGE, 'right': EDGE, 'bottom': EDGE})
 
-# gaps between the gold fingers, front and back (7 fingers a side)
-NF = 7
-pitch = 2 * TAB_X / NF
-for i in range(1, NF):
+# gaps between the gold fingers on the front: 28 positions drawn as 12
+# fingers, the wider key gap between positions 6 and 7
+pitch = 2 * TAB_X / 12
+for i in range(1, 12):
     x = -TAB_X + i * pitch
-    g = [(x - 0.32, 0.0), (x + 0.32, 0.0), (x + 0.32, TAB_Y), (x - 0.32, TAB_Y)]
-    m.decal_xy(g, ZF, GREEN, lift=0.02)
-    m.polygon([(gx, gy, ZB - 0.02) for gx, gy in g], GREEN, normal=(0, 0, -1))
+    hw = 0.26 if i == 3 else 0.13
+    m.decal_xy([(x - hw, 0.0), (x + hw, 0.0), (x + hw, TAB_Y), (x - hw, TAB_Y)], ZF, EDGE, lift=0.02)
 
 
 def chip(x0, y0, x1, y1, h, top=CHIP):
-    """A chip body sitting on the board front."""
-    return m.box(x0, y0, ZF, x1, y1, ZF + h, CHIP_SIDE, faces={'front': top, 'back': None})
+    """A chip body sitting on the board front. Its downward side is left
+    out: a few mm tall, it is never seen from the views the frontend uses
+    (upright from above, or laid flat seen from behind)."""
+    return m.box(x0, y0, ZF, x1, y1, ZF + h, CHIP_SIDE, faces={'front': top, 'back': None, 'bottom': None})
 
 
-def pad(x0, y0, x1, y1, col, lift=0.03):
+def pad(x0, y0, x1, y1, col, lift=0.02):
     return m.decal_xy([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], ZF, col, lift=lift)
 
 
-# ---- top band: CPU (long DIP with pin rows), two EPROMs, square custom chip
-pad(-12.6, 19.25, -3.4, 22.25, PIN)                 # pin rows peeking out
-chip(-12.4, 19.5, -3.6, 22.0, 0.5)
-for y0 in (21.4, 18.2):
-    chip(-1.6, y0, 4.2, y0 + 1.7, 0.45)
-    pad(-0.2, y0 + 0.35, 2.4, y0 + 1.35, LABEL, lift=0.48)   # sticker on top
-pad(7.4, 17.9, 12.6, 23.1, PIN)                     # pin skirt
-chip(7.8, 18.3, 12.2, 22.7, 0.4)
+# ---- the game sticker: the picture area, 4:3, upper right
+m.image_xy(-2.6, 11.0, 13.0, 22.7, ZF, fallback=STICKER, lift=0.03)
 
-# ---- middle band: a row of small logic chips
-for i in range(6):
-    x = -12.4 + i * 2.1
-    chip(x, 10.6, x + 0.9, 13.6, 0.4)
+# ---- upper left: the CPU (long DIP, pin rows peeking out), two EPROMs
+pad(-13.4, 21.0, -4.4, 23.6, PIN)
+chip(-13.2, 21.25, -4.6, 23.35, 0.45)
+for x0 in (-13.2, -8.6):
+    chip(x0, 17.7, x0 + 3.8, 19.3, 0.45)
+    pad(x0 + 1.5, 18.1, x0 + 2.3, 18.9, PIN, lift=0.47)     # quartz window
 
-# ---- red DIP-switch block near the bottom left, white switch row on top
-m.box(-12.2, 4.2, ZF, -7.4, 5.8, ZF + 0.55, RED, faces={'back': None})
-pad(-11.8, 4.65, -7.8, 5.35, LABEL, lift=0.58)
+# square custom chip with its pin skirt
+pad(-12.9, 12.3, -8.5, 16.7, PIN)
+chip(-12.5, 12.7, -8.9, 16.3, 0.3)
 
-# ---- traces (lighter lines) linking the parts
-pad(-8.0, 14.6, 10.0, 14.95, TRACE, lift=0.02)
-pad(-13.0, 7.6, 8.0, 7.95, TRACE, lift=0.02)
+# ---- lower band: rows of small logic chips
+for y0 in (7.9, 5.2):
+    for i in range(5):
+        x0 = -12.6 + i * 5.2
+        chip(x0, y0, x0 + 3.0, y0 + 0.9, 0.4)
+chip(-12.6, 2.3, -5.4, 3.6, 0.45)                   # a long sound / video chip
 
-# ---- capacitors near the edge connector (5-sided cylinders, silver tops)
-for cx, cy in ((9.8, 5.0), (12.2, 8.2)):
-    m.cylinder_z(cx, cy, 0.9, ZF, ZF + 1.5, CAP, segments=5, front=PIN, back=False)
+# ---- a trace (lighter line) along the chip rows
+pad(-13.0, 9.6, 12.4, 9.85, TRACE)
 
-# ---- stand-offs through the corner holes (nylon posts, back and a screw cap front)
-for sx in (-13.7, 13.7):
-    for sy in (3.0, 23.7):
-        m.box(sx - 0.45, sy - 0.45, -1.35, sx + 0.45, sy + 0.45, ZF + 0.25, NYLON)
+# ---- electrolytic capacitors (5-sided cylinders, silver tops)
+for cx, cy in ((11.6, 3.3), (-5.6, 14.6)):
+    m.cylinder_z(cx, cy, 0.8, ZF, ZF + 1.3, CAP, segments=5, front=PIN, back=False)
+
+# ---- nylon stand-offs under the four corner holes (feet when laid flat)
+for sx in (-14.2, 14.2):
+    for sy in (2.0, 23.8):
+        m.box(sx - 0.4, sy - 0.4, POST_Z, sx + 0.4, sy + 0.4, ZB, NYLON, faces={'front': None})
+        pad(sx - 0.4, sy - 0.4, sx + 0.4, sy + 0.4, NYLON, lift=0.03)    # the post's head
 
 print(m.stats())
 m.save()

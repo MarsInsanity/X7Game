@@ -1,36 +1,36 @@
 # X7 Game model colours: every one an exact RGB565 colour
-newmtl c_186131
-Kd 0.094118 0.380392 0.192157
+newmtl c_181418
+Kd 0.094118 0.078431 0.094118
 Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_2941A5
-Kd 0.160784 0.254902 0.647059
+newmtl c_212429
+Kd 0.129412 0.141176 0.160784
 Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_31AE5A
-Kd 0.192157 0.682353 0.352941
+newmtl c_292831
+Kd 0.160784 0.156863 0.192157
 Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_848A94
-Kd 0.517647 0.541176 0.580392
+newmtl c_42414A
+Kd 0.258824 0.254902 0.290196
 Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_B5B6C6
-Kd 0.709804 0.713725 0.776471
+newmtl c_52555A
+Kd 0.321569 0.333333 0.352941
 Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_CE2031
-Kd 0.807843 0.125490 0.192157
+newmtl c_63656B
+Kd 0.388235 0.396078 0.419608
 Ka 0 0 0
 Ks 0 0 0
 illum 1
@@ -41,27 +41,11 @@ Ka 0 0 0
 Ks 0 0 0
 illum 1
 
-newmtl c_DEDFE7
-Kd 0.870588 0.874510 0.905882
+# the game's picture; Kd is the colour drawn when there is none
+newmtl image
+Kd 0.937255 0.921569 0.905882
 Ka 0 0 0
 Ks 0 0 0
 illum 1
-
-newmtl c_EF8221
-Kd 0.937255 0.509804 0.129412
-Ka 0 0 0
-Ks 0 0 0
-illum 1
-
-newmtl c_F7CF21
-Kd 0.968627 0.811765 0.129412
-Ka 0 0 0
-Ks 0 0 0
-illum 1
-
-newmtl c_F7F3EF
-Kd 0.968627 0.952941 0.937255
-Ka 0 0 0
-Ks 0 0 0
-illum 1
+map_Kd image.png
 

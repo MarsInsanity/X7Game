@@ -1,101 +1,110 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""NES Game Pak: grey cartridge standing upright, label to +Z, connector edge at y = 0."""
+"""NES Game Pak (North American): grey cartridge, 12 x 13.3 x 2 cm, standing
+upright, front label (the game's picture) to +Z, connector edge at y = 0.
+
+Shape after photos of the real shell: the bottom 2.4 cm is narrower (10.8 cm)
+than the body; the edge connector sits in an opening in the bottom face (the
+front and back walls run down to the bottom edge); front: big label in the
+upper part, horizontal grip ribs below it; back: a ribbed strip on the left,
+the recessed back-sticker panel on the right, an arrow pointing to the
+connector.
+
+Insertion (front-loading NES): the console turns this model label up and
+slides it in connector first, then presses it down. The outer shell is a
+closed prism: outline below, z = -1 .. +1 (front ribs and decals stick out
+at most 0.1 cm on +Z, back decals 0.03 cm on -Z)."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (112, 112, 116)     # NES cart grey
-SHELL_DK = (78, 78, 82)     # ridges, recess
-EDGE = (138, 138, 142)      # top / side faces
-LABEL = (24, 24, 28)        # black label base
-ART = (64, 140, 224)        # picture area (sky)
-ART2 = (224, 72, 48)        # title band
-ART3 = (240, 200, 64)       # small accent
+SHELL = (128, 128, 132)     # NES cart grey
+EDGE = (152, 152, 156)      # top and side walls (a touch lighter)
+RIB = (88, 88, 92)          # grip ribs, back grooves
+PANEL = (104, 104, 108)     # recessed back-sticker panel
+LABEL = (36, 36, 40)        # label colour when there is no picture (black-bordered labels)
+CAVITY = (20, 20, 22)       # inside the connector opening
 PCB = (32, 112, 56)
 GOLD = (216, 176, 64)
 
-W, H = 12.0, 13.3
-ZF, ZB = 0.85, -0.75        # main shell front / back
-ZS = -1.15                  # back of the thicker top step
-NX = 5.0                    # half width of the connector notch
-NY = 0.75                   # notch height
-lx, ly0, ly1 = 4.95, 4.55, 12.45     # label area on the front
-bx0, by0, bx1, by1 = -4.2, 2.2, 4.2, 8.6   # sticker recess on the back
-SY = 9.6                               # bottom of the back step
+W, H, T = 12.0, 13.3, 2.0
+hw, ht = W / 2, T / 2
+ZF, ZB = ht, -ht
+NW = 5.4                    # half width of the narrow bottom part
+NH = 2.4                    # height of the narrow bottom part
+CX, CZ, CY = 4.75, 0.62, 0.7    # connector opening: half width, half depth, depth upwards
 
 m = Model('nes', 'media')
-hw = W / 2
 
+# label recess on the front (the label fills it; its floor is the picture)
+LX, LY0, LY1 = 5.1, 5.2, 12.65
+LD = 0.07                   # recess depth
 
-# heights where the front / back faces are split: the side walls get a vertex
-# at each, and every tile edge running along a side gets them too, so there
-# are no T-junction cracks along the outline
-SPLITS = [0, by0, ly0, by1, SY, ly1, H]
+# ---------------------------------------------------------------- shell
+# outline (CCW seen from +Z), side walls split where the label recess starts
+# and ends so the front tiles share their vertices (no cracks)
+outline = [(-NW, 0), (NW, 0), (NW, NH), (hw, NH), (hw, LY0), (hw, LY1), (hw, H),
+           (-hw, H), (-hw, LY1), (-hw, LY0), (-hw, NH), (-NW, NH)]
+m.polygon([(x, y, ZB) for x, y in outline], SHELL, normal=(0, 0, -1))
+for i in range(1, len(outline)):            # every wall but the bottom
+    (xa, ya), (xb, yb) = outline[i], outline[(i + 1) % len(outline)]
+    m.quad((xa, ya, ZF), (xa, ya, ZB), (xb, yb, ZB), (xb, yb, ZF), EDGE)
+# front face tiled around the label recess
+def front(pts, color=SHELL):
+    m.polygon([(x, y, ZF) for x, y in pts], color, normal=(0, 0, 1))
 
+front([(-NW, 0), (NW, 0), (NW, NH), (hw, NH), (hw, LY0), (LX, LY0), (-LX, LY0), (-hw, LY0), (-hw, NH), (-NW, NH)])
+front([(-hw, LY1), (-LX, LY1), (LX, LY1), (hw, LY1), (hw, H), (-hw, H)])
+front([(-hw, LY0), (-LX, LY0), (-LX, LY1), (-hw, LY1)])
+front([(LX, LY0), (hw, LY0), (hw, LY1), (LX, LY1)])
+# recess walls (face inwards) and the picture as its floor
+for t in m.box(-LX, LY0, ZF - LD, LX, LY1, ZF, RIB, faces={'front': None, 'back': None}):
+    i0, i1, i2, c = m.tris[t]
+    m.tris[t] = (i1, i0, i2, c)
+m.image_xy(-LX, LY0, LX, LY1, ZF - LD, fallback=LABEL, lift=0.0)
 
-def edge_points(pts):
-    """insert the split points that lie on the polygon's x = +-hw edges"""
-    out = []
-    for i, (xa, ya) in enumerate(pts):
-        xb, yb = pts[(i + 1) % len(pts)]
-        out.append((xa, ya))
-        if xa == xb and abs(xa) == hw:
-            mid = [y for y in SPLITS if min(ya, yb) < y < max(ya, yb)]
-            out += [(xa, y) for y in sorted(mid, reverse=ya > yb)]
-    return out
+# bottom face with the connector opening
+def bottom(x0, z0, x1, z1):
+    m.quad((x0, 0, z0), (x1, 0, z0), (x1, 0, z1), (x0, 0, z1), EDGE)
 
+bottom(-NW, ZB, -CX, ZF)
+bottom(CX, ZB, NW, ZF)
+bottom(-CX, CZ, CX, ZF)
+bottom(-CX, ZB, CX, -CZ)
+# the cavity above it: dark walls and ceiling, seen from below
+for t in m.box(-CX, 0, -CZ, CX, CY, CZ, CAVITY, faces={'bottom': None}):
+    i0, i1, i2, c = m.tris[t]
+    m.tris[t] = (i1, i0, i2, c)       # turned inside out: the walls face into the opening
 
-def face(pts, z, color, nz):
-    """flat face at depth z facing +Z (nz = 1) or -Z (nz = -1)"""
-    return m.polygon([(x, y, z) for x, y in edge_points(pts)], color, normal=(0, 0, nz))
+# circuit board edge hanging in the opening, gold fingers on both sides
+PB = 0.08
+m.box(-CX + 0.25, 0.08, -PB, CX - 0.25, CY, PB, PCB, faces={'top': None})
+fing = [(-CX + 0.45, 0.12), (CX - 0.45, 0.12), (CX - 0.45, CY - 0.08), (-CX + 0.45, CY - 0.08)]
+m.decal_xy(fing, PB, GOLD, lift=0.015)
+m.polygon([(x, y, -PB - 0.015) for x, y in fing], GOLD, normal=(0, 0, -1))
 
-
-# main shell: outline with the open connector notch at the bottom; the front
-# and back faces are tiled around the label / sticker so no decal has to sit
-# on top of a big face (the software renderer's depth is not perspective correct)
-outline = [(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, H), (-hw, H)]
-m.extrude_xy(edge_points(outline), ZB, ZF, SHELL, front=False, back=False, side=EDGE)
-# front tiles
-face([(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, ly0), (lx, ly0), (-lx, ly0), (-hw, ly0)], ZF, SHELL, 1)
-face([(-hw, ly1), (-lx, ly1), (lx, ly1), (hw, ly1), (hw, H), (-hw, H)], ZF, SHELL, 1)
-face([(-hw, ly0), (-lx, ly0), (-lx, ly1), (-hw, ly1)], ZF, SHELL, 1)
-face([(lx, ly0), (hw, ly0), (hw, ly1), (lx, ly1)], ZF, SHELL, 1)
-# back tiles (the part under the step is hidden inside it)
-face([(-hw, 0), (-NX, 0), (-NX, NY), (NX, NY), (NX, 0), (hw, 0), (hw, by0), (bx1, by0), (bx0, by0), (-hw, by0)], ZB, SHELL, -1)
-face([(-hw, by1), (bx0, by1), (bx1, by1), (hw, by1), (hw, SY), (-hw, SY)], ZB, SHELL, -1)
-face([(-hw, by0), (bx0, by0), (bx0, by1), (-hw, by1)], ZB, SHELL, -1)
-face([(bx1, by0), (hw, by0), (hw, by1), (bx1, by1)], ZB, SHELL, -1)
-face([(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)], ZB, SHELL_DK, -1)
-
-# thicker top step on the back
-m.box(-hw, SY, ZS, hw, H, ZB, EDGE, faces={'front': None, 'back': SHELL})
-# grip ridges across the back of the step
-for i in range(5):
-    y = 10.0 + i * 0.62
-    m.box(-hw + 0.6, y, ZS - 0.12, hw - 0.6, y + 0.3, ZS, SHELL_DK, faces={'front': None})
-
-# circuit board showing in the notch, with gold contacts
-m.box(-NX + 0.05, 0.0, -0.12, NX - 0.05, NY, 0.12, PCB, faces={'top': None})
-m.decal_xy([(-NX + 0.4, 0.08), (NX - 0.4, 0.08), (NX - 0.4, NY - 0.12), (-NX + 0.4, NY - 0.12)], 0.12, GOLD, lift=0.02)
-
-# grip ridges on the lower front
+# ---------------------------------------------------------------- front
+# horizontal grip ribs below the label
 for i in range(6):
-    y = 1.15 + i * 0.52
-    m.box(-hw + 0.7, y, ZF, hw - 0.7, y + 0.24, ZF + 0.12, SHELL_DK, faces={'back': None})
+    y = 0.75 + i * 0.68
+    m.box(-4.7, y, ZF, 4.7, y + 0.28, ZF + 0.1, RIB, faces={'back': None})
 
-# label: a thin raised slab; its face is tiled into black frame + picture pieces
-ZL = ZF + 0.06
-m.box(-lx, ly0, ZF, lx, ly1, ZL, LABEL, faces={'back': None, 'front': None})
-ax0, ax1, ay0, ay1 = -lx + 0.5, lx - 0.5, ly0 + 0.5, ly1 - 2.2
-ty0, ty1 = ly1 - 1.7, ly1 - 0.5
-face([(-lx, ly0), (lx, ly0), (lx, ay0), (ax1, ay0), (ax0 + 2.5, ay0), (ax0, ay0), (-lx, ay0)], ZL, LABEL, 1)
-face([(-lx, ty1), (ax0, ty1), (ax1, ty1), (lx, ty1), (lx, ly1), (-lx, ly1)], ZL, LABEL, 1)
-face([(-lx, ay0), (ax0, ay0), (ax0, ay0 + 1.9), (ax0, ay1), (ax0, ty0), (ax0, ty1), (-lx, ty1)], ZL, LABEL, 1)
-face([(ax1, ay0), (lx, ay0), (lx, ty1), (ax1, ty1), (ax1, ty0), (ax1, ay1)], ZL, LABEL, 1)
-face([(ax0, ay1), (ax1, ay1), (ax1, ty0), (ax0, ty0)], ZL, LABEL, 1)
-face([(ax0 + 2.5, ay0), (ax1, ay0), (ax1, ay1), (ax0, ay1), (ax0, ay0 + 1.9), (ax0 + 2.5, ay0 + 1.9)], ZL, ART, 1)
-face([(ax0, ay0), (ax0 + 2.5, ay0), (ax0 + 2.5, ay0 + 1.9), (ax0, ay0 + 1.9)], ZL, ART3, 1)
-face([(ax0, ty0), (ax1, ty0), (ax1, ty1), (ax0, ty1)], ZL, ART2, 1)
+# ---------------------------------------------------------------- back
+def back_decal(pts, color, lift=0.03):
+    m.polygon([(x, y, ZB - lift) for x, y in pts], color, normal=(0, 0, -1))
+
+def back_rect(x0, y0, x1, y1, color, lift=0.03):
+    back_decal([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], color, lift)
+
+# seen from behind, the ribbed strip is on the viewer's left (model +x) and the
+# recessed sticker panel on the right (model -x)
+back_rect(-4.45, 4.2, 1.2, 13.05, PANEL)
+# ribbed strip: deeper finger grip at the top, grooves below
+back_rect(1.55, 11.7, 4.15, 13.1, RIB)
+for i in range(9):
+    y = 0.6 + i * 1.2
+    back_rect(1.55, y, 4.15, y + 0.3, RIB)
+# arrow pointing down to the connector
+back_decal([(0.5, 3.4), (-0.55, 3.4), (0.0, 2.55)], RIB)
 
 print(m.stats())
 print(m.save())

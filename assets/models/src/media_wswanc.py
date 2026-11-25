@@ -2,128 +2,143 @@
 """WonderSwan Color cartridge: the clear (transparent) Color-only cart,
 standing upright, label to +Z, connector edge at y = 0.
 
-Real size about 6.4 x 4.4 x 0.65 cm (the grip end about 0.9 cm thick). The
-cart is landscape: its single row of 48 edge contacts (1.25 mm pitch, about
-6 cm) runs along the long bottom edge. Signature features: the smoky clear
-shell (Color-only games came in transparent carts, the mono ones in black),
-the green circuit board and its chips showing through the back, the thicker
-rounded grip end along the top with finger ridges, the big label filling the
-front with a four-colour logo strip, the chamfered bottom corners and the
-exposed gold contacts at the bottom of the back.
+Real size about 6.4 x 4.3 x 0.6 cm (the grip lip along the top 0.8 cm
+thick). The cart is landscape: its row of edge contacts runs along the long
+bottom edge. It slides down into the bay on the back of the WonderSwan with
+its label facing out (away from the player), the grip lip along the top
+staying at the console's top edge.
+
+Signature features: the clear shell (Color-only games came in transparent
+carts, the mono ones in black) with the green board and its chips showing
+through the back, the thicker grip lip along the top with finger ridges,
+the big landscape label filling the front (the game's picture), the
+chamfered bottom corners and the gold contacts at the bottom of the back.
+
+Insertion shape (what the console's bay must take):
+  * the slab: x -3.2 .. 3.2, y 0 .. 3.6, z -0.30 .. 0.30 (bottom corners
+    chamfered 0.25), a clean closed block; the label sits in a 0.05 deep
+    recess in its front, the contacts are 0.02 cm decals on its back
+  * the grip lip: y 3.6 .. 4.3, z -0.30 .. 0.50 (flush with the back, it
+    sticks out 0.2 cm on the label side), rounded top corners (r 0.35), two
+    finger ridges on its front up to z 0.56
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-CLEAR = (186, 210, 226)      # clear shell (pale, slightly cyan), front / back faces
-THROUGH = (132, 172, 160)    # board seen through the clear plastic (front, above the label)
-CLEAR_E = (118, 146, 170)    # shell sides and grip ridges (darker so edges read)
-PCB_SEEN = (98, 150, 120)    # circuit board seen through the clear back
-PCB = (32, 112, 64)          # bare board behind the contacts
-CHIP = (38, 38, 48)          # chips seen through the back
+CLEAR = (178, 204, 222)      # clear shell, front / back faces (pale, slightly cyan)
+CLEAR_E = (112, 140, 166)    # shell sides, grip ridges (darker so edges read)
+THROUGH = (124, 164, 150)    # board seen through the clear front around the label
+PCB_SEEN = (92, 146, 116)    # circuit board seen through the clear back
+PCB = (30, 108, 60)          # bare board behind the contacts
+CHIP = (36, 36, 46)          # chips seen through the back
 GOLD = (226, 186, 70)        # edge contacts
-LABEL = (240, 238, 230)      # label paper
-SKY = (72, 136, 224)         # artwork, upper
-GROUND = (236, 132, 40)      # artwork, lower
-RED = (220, 48, 56)          # four-colour logo strip
-YELLOW = (244, 208, 40)
-GREEN = (64, 180, 84)
+LABEL = (238, 236, 228)      # label paper (also the picture's fallback)
 
-W, H = 6.4, 4.4
+W, H = 6.4, 4.3
 X0, X1 = -W / 2, W / 2
-CH = 0.3                     # chamfer at the bottom corners
-GY = 3.65                    # grip end starts here
-ZB, ZF, ZR = -0.30, 0.27, 0.35   # back, label floor, front rim
-GZB, GZF = -0.42, 0.50       # grip end back / front
-CX, CY = 2.75, 0.62          # contacts strip on the back (half width, height)
-PY0, PY1 = 0.95, 3.4         # board window seen through the back (half width CX)
-LX0, LX1, LY0, LY1 = -2.9, 2.9, 0.62, 3.4   # label recess on the front
+CH = 0.25                    # chamfer at the bottom corners
+GY = 3.6                     # grip lip starts here
+R = 0.35                     # rounded top corners
+ZB, ZR, ZF = -0.30, 0.30, 0.25   # back, front, label floor (recess 0.05)
+GZF = 0.50                   # grip lip front
+CX, CY = 2.75, 0.6           # contacts strip on the back (half width, height)
+PY0, PY1 = 0.8, 3.4          # board window seen through the back
+LX0, LX1, LY0, LY1 = -2.95, 2.95, 0.35, 3.4   # label recess on the front
+B = 0.09                     # paper border around the picture
 
 m = Model('wswanc', 'media')
 
+TOP = [p for p in Model.rounded_rect(X0, GY - 1, X1, H, R, segments=2) if p[1] > GY + 1e-6]  # (X1,H-R)..(X0,H-R)
+SIDE_Y = sorted({CH, CY, LY0, PY0, PY1, LY1, GY})
+OUTLINE = ([(X0 + CH, 0), (-CX, 0), (CX, 0), (X1 - CH, 0)] + [(X1, y) for y in SIDE_Y] + TOP +
+           [(X0, y) for y in reversed(SIDE_Y)])
 
-def face(pts, z, color, nz=1):
-    """flat face at depth z facing +Z (nz = 1) or -Z (nz = -1)"""
-    return m.polygon([(x, y, z) for x, y in pts], color, normal=(0, 0, nz))
+
+def on_edges(poly, pts):
+    """insert every point of pts lying inside an edge of poly (no T-junctions)"""
+    out = []
+    for i in range(len(poly)):
+        a, b = poly[i], poly[(i + 1) % len(poly)]
+        out.append(a)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        l2 = dx * dx + dy * dy
+        mid = []
+        for p in pts:
+            t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2
+            if 1e-6 < t < 1 - 1e-6:
+                cx, cy = a[0] + t * dx - p[0], a[1] + t * dy - p[1]
+                if cx * cx + cy * cy < 1e-10:
+                    mid.append((t, p))
+        out += [p for t, p in sorted(set(mid))]
+    return out
 
 
-# Every face that meets another along an edge carries the same vertices on
-# that edge (no T-junctions), so the software rasteriser leaves no cracks.
+def faces(tiles, z, nz):
+    """tile a flat face at depth z facing nz; tiles = [(pts, colour)]"""
+    allp = {p for pts, c in tiles for p in pts} | set(OUTLINE)
+    for pts, c in tiles:
+        m.polygon([(x, y, z) for x, y in on_edges(pts, allp)], c, normal=(0, 0, nz))
 
-# ---- body: one slab from the back to the front rim, sides only
-body = [(X0 + CH, 0), (-CX, 0), (CX, 0), (X1 - CH, 0), (X1, CH), (X1, CY), (X1, LY1), (X1, GY),
-        (X0, GY), (X0, LY1), (X0, CY), (X0, CH)]
-m.extrude_xy(body, ZB, ZR, CLEAR, front=False, back=False, side=CLEAR_E)
 
-# ---- back face, tiled: clear frame, board window, contacts strip
-face([(X0 + CH, 0), (-CX, 0), (-CX, CY), (X0, CY), (X0, CH)], ZB, CLEAR, -1)
-face([(CX, 0), (X1 - CH, 0), (X1, CH), (X1, CY), (CX, CY)], ZB, CLEAR, -1)
-face([(X0, CY), (-CX, CY), (-CX, PY0), (-CX, PY1), (-CX, GY), (X0, GY), (X0, LY1)], ZB, CLEAR, -1)
-face([(CX, CY), (X1, CY), (X1, LY1), (X1, GY), (CX, GY), (CX, PY1), (CX, PY0)], ZB, CLEAR, -1)
-face([(-CX, CY), (CX, CY), (CX, PY0), (-CX, PY0)], ZB, CLEAR, -1)
-face([(-CX, PY1), (CX, PY1), (CX, GY), (-CX, GY)], ZB, CLEAR, -1)
-face([(-CX, PY0), (CX, PY0), (CX, PY1), (-CX, PY1)], ZB, PCB_SEEN, -1)
-face([(-CX, 0), (CX, 0), (CX, CY), (-CX, CY)], ZB, PCB, -1)
-# chips inside, seen through the clear plastic (small, so a lift is safe)
-face([(-2.3, 1.45), (-0.2, 1.45), (-0.2, 2.95), (-2.3, 2.95)], ZB - 0.03, CHIP, -1)
-face([(0.5, 1.7), (1.6, 1.7), (1.6, 2.7), (0.5, 2.7)], ZB - 0.03, CHIP, -1)
-face([(1.95, 1.25), (2.35, 1.25), (2.35, 1.65), (1.95, 1.65)], ZB - 0.03, GOLD, -1)   # crystal
+# ---- shell: the whole outline (slab + lip) from the back to the front plane
+m.extrude_xy(OUTLINE, ZB, ZR, CLEAR, front=False, back=False, side=CLEAR_E)
+
+# ---- back: clear frame, contacts strip, board window (flush with the slab back)
+faces([
+    ([(X0 + CH, 0), (-CX, 0), (-CX, CY), (X0, CY), (X0, CH)], CLEAR),
+    ([(-CX, 0), (CX, 0), (CX, CY), (-CX, CY)], PCB),
+    ([(CX, 0), (X1 - CH, 0), (X1, CH), (X1, CY), (CX, CY)], CLEAR),
+    ([(X0, CY), (-CX, CY), (-CX, PY0), (-CX, PY1), (X0, PY1)], CLEAR),
+    ([(CX, CY), (X1, CY), (X1, PY1), (CX, PY1), (CX, PY0)], CLEAR),
+    ([(-CX, CY), (CX, CY), (CX, PY0), (-CX, PY0)], CLEAR),
+    ([(-CX, PY0), (CX, PY0), (CX, PY1), (-CX, PY1)], PCB_SEEN),
+    ([(X0, PY1), (-CX, PY1), (CX, PY1), (X1, PY1)] + TOP, CLEAR),
+], ZB, -1)
+def back_decal(pts, c):
+    m.polygon([(x, y, ZB - 0.02) for x, y in pts], c, normal=(0, 0, -1))
+
+
+# chips on the board, seen through the clear plastic
+for x0, y0, x1, y1 in ((-2.2, 1.35, -0.3, 2.85), (0.4, 1.6, 1.6, 2.6)):
+    back_decal([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], CHIP)
 # gold edge contacts
 n = 8
 pitch = (2 * CX - 0.2) / n
 for i in range(n):
-    x0 = -CX + 0.1 + i * pitch + 0.05
-    face([(x0, 0.0), (x0 + pitch - 0.1, 0.0), (x0 + pitch - 0.1, CY - 0.15), (x0, CY - 0.15)], ZB - 0.03, GOLD, -1)
+    x0 = -CX + 0.1 + i * pitch + 0.06
+    x1 = x0 + pitch - 0.12
+    back_decal([(x0, 0.0), (x1, 0.0), (x1, CY - 0.12), (x0, CY - 0.12)], GOLD)
 
-# ---- front: clear rim around the label recess (front faces at ZR)
-face([(X0 + CH, 0), (-CX, 0), (CX, 0), (X1 - CH, 0), (X1, CH), (X1, LY0), (LX1, LY0), (LX0, LY0),
-      (X0, LY0), (X0, CH)], ZR, CLEAR)
-face([(X0, LY0), (LX0, LY0), (LX0, LY1), (X0, LY1)], ZR, CLEAR)
-face([(LX1, LY0), (X1, LY0), (X1, LY1), (LX1, LY1)], ZR, CLEAR)
-face([(X0, LY1), (LX0, LY1), (LX1, LY1), (X1, LY1), (X1, GY), (X0, GY)], ZR, THROUGH)
+# ---- front of the slab: board seen through the clear rim around the label
+faces([
+    ([(X0 + CH, 0), (X1 - CH, 0), (X1, CH), (X1, LY0), (LX1, LY0), (LX0, LY0), (X0, LY0), (X0, CH)], THROUGH),
+    ([(X0, LY0), (LX0, LY0), (LX0, LY1), (X0, LY1)], THROUGH),
+    ([(LX1, LY0), (X1, LY0), (X1, LY1), (LX1, LY1)], THROUGH),
+    ([(X0, LY1), (LX0, LY1), (LX1, LY1), (X1, LY1), (X1, GY), (X0, GY)], THROUGH),
+], ZR, 1)
 
-# ---- grip end along the top: thicker, rounded top corners, finger ridges
-R = 0.4
-top = [p for p in Model.rounded_rect(X0, GY - 1, X1, H, R, segments=2) if p[1] > GY]   # (X1,H-R) .. (X0,H-R)
-grip = [(X1, GY)] + top + [(X0, GY)]
-face(grip, GZF, CLEAR)
-face(grip, GZB, CLEAR, -1)
-for i in range(len(top) - 1):
-    (xa, ya), (xb, yb) = top[i], top[i + 1]
-    m.quad((xa, ya, GZF), (xa, ya, GZB), (xb, yb, GZB), (xb, yb, GZF), CLEAR_E)
-zs = (GZB, ZB, ZR, GZF)
-for x, nx in ((X1, 1), (X0, -1)):
-    yt = H - R
-    m.polygon([(x, GY, z) for z in zs] + [(x, yt, GZF), (x, yt, GZB)], CLEAR_E, normal=(nx, 0, 0))
-m.polygon([(X1, GY, z) for z in zs] + [(X0, GY, z) for z in reversed(zs)], CLEAR_E, normal=(0, -1, 0))
-for i in range(2):
-    y = GY + 0.16 + i * 0.27
-    m.box(X0 + 0.35, y, GZF, X1 - 0.35, y + 0.13, GZF + 0.07, CLEAR_E, faces={'back': None})
-m.box(X0 + 0.6, GY + 0.25, GZB - 0.07, X1 - 0.6, GY + 0.4, GZB, CLEAR_E, faces={'front': None})
-
-# ---- label filling the recess, tiled: paper frame, artwork, logo strip
-ax0, ax1, ay0, ay1 = LX0 + 0.25, LX1 - 0.25, LY0 + 0.25, LY1 - 0.65
-hy = 1.45                                    # horizon of the artwork
-# recess walls (carry the label's edge vertices)
+# ---- label recess: walls, paper floor, the game's picture
 m.polygon([(LX0, LY0, ZF), (LX1, LY0, ZF), (LX1, LY0, ZR), (LX0, LY0, ZR)], CLEAR_E, normal=(0, 1, 0))
 m.polygon([(LX0, LY1, ZF), (LX1, LY1, ZF), (LX1, LY1, ZR), (LX0, LY1, ZR)], CLEAR_E, normal=(0, -1, 0))
-for x, nx in ((LX0, 1), (LX1, -1)):
-    m.polygon([(x, y, ZF) for y in (LY0, ay0, ay1, LY1)] + [(x, LY1, ZR), (x, LY0, ZR)], CLEAR_E, normal=(nx, 0, 0))
-face([(LX0, LY0), (LX1, LY0), (LX1, ay0), (ax1, ay0), (ax0, ay0), (LX0, ay0)], ZF, LABEL)
-face([(LX0, ay1), (ax0, ay1), (ax1, ay1), (LX1, ay1), (LX1, LY1), (LX0, LY1)], ZF, LABEL)
-face([(LX0, ay0), (ax0, ay0), (ax0, hy), (ax0, ay1), (LX0, ay1)], ZF, LABEL)
-face([(ax1, ay0), (LX1, ay0), (LX1, ay1), (ax1, ay1), (ax1, hy)], ZF, LABEL)
-face([(ax0, ay0), (ax1, ay0), (ax1, hy), (ax0, hy)], ZF, GROUND)
-face([(ax0, hy), (ax1, hy), (ax1, ay1), (ax0, ay1)], ZF, SKY)
-# four-colour logo strip on the paper above the artwork (small raised tiles)
-ly0, ly1 = ay1 + 0.18, LY1 - 0.15
-for i, c in enumerate((RED, YELLOW, GREEN, SKY)):
-    x0 = -2.45 + i * 0.5
-    m.box(x0, ly0, ZF, x0 + 0.42, ly1, ZF + 0.03, c, faces={'back': None, 'bottom': None, 'top': None,
-                                                         'left': None, 'right': None})
-# a sun and a hill in the artwork (thin, small)
-m.cylinder_z(1.6, 2.2, 0.35, ZF, ZF + 0.03, YELLOW, segments=8, back=False, side=False)
-face([(-2.1, hy), (-0.3, hy), (-1.2, 2.15)], ZF + 0.03, GREEN)
+m.polygon([(LX0, LY0, ZF), (LX0, LY1, ZF), (LX0, LY1, ZR), (LX0, LY0, ZR)], CLEAR_E, normal=(1, 0, 0))
+m.polygon([(LX1, LY0, ZF), (LX1, LY1, ZF), (LX1, LY1, ZR), (LX1, LY0, ZR)], CLEAR_E, normal=(-1, 0, 0))
+m.polygon([(LX0, LY0, ZF), (LX1, LY0, ZF), (LX1, LY1, ZF), (LX0, LY1, ZF)], LABEL, normal=(0, 0, 1))
+m.image_xy(LX0 + B, LY0 + B, LX1 - B, LY1 - B, ZF, fallback=LABEL, lift=0.02)
+
+# ---- grip lip: sticks out 0.2 cm on the label side along the top
+grip = [(X1, GY)] + TOP + [(X0, GY)]
+m.polygon([(x, y, GZF) for x, y in grip], CLEAR, normal=(0, 0, 1))
+m.quad((X0, GY, ZR), (X1, GY, ZR), (X1, GY, GZF), (X0, GY, GZF), CLEAR_E)            # underside, faces -Y
+for i in range(len(TOP) - 1):
+    (xa, ya), (xb, yb) = TOP[i], TOP[i + 1]
+    m.quad((xa, ya, ZR), (xb, yb, ZR), (xb, yb, GZF), (xa, ya, GZF), CLEAR_E)
+for x, nx in ((X1, 1), (X0, -1)):
+    m.polygon([(x, GY, ZR), (x, GY, GZF), (x, H - R, GZF), (x, H - R, ZR)], CLEAR_E, normal=(nx, 0, 0))
+# finger ridges on the lip
+for i in range(2):
+    y = GY + 0.14 + i * 0.26
+    m.box(X0 + 0.45, y, GZF, X1 - 0.45, y + 0.12, GZF + 0.06, CLEAR_E, faces={'back': None})
 
 if __name__ == '__main__':
     print(m.stats())

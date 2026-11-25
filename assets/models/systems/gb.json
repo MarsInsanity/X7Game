@@ -1,0 +1,16 @@
+{
+  "console": "../consoles/gb.obj",
+  "media": "../media/gb.obj",
+  "view": [-150, 30],
+  "parts": {
+    "switch": {"slide": [0.45, 0, 0]}
+  },
+  "path": [
+    {"pos": [0, 15.8, -1.0], "rot": [0, 180, 0]},
+    {"pos": [0, 8.3, -1.0], "rot": [0, 180, 0]}
+  ],
+  "steps": [
+    {"time": 0.9, "media": [0, 1]},
+    {"time": 0.25, "open": ["switch"]}
+  ]
+}

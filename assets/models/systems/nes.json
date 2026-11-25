@@ -1,0 +1,19 @@
+{
+  "console": "../consoles/nes.obj",
+  "media": "../media/nes.obj",
+  "view": [30, 24],
+  "parts": {
+    "door": {"hinge": {"pivot": [0, 8.9, 6.95], "axis": [1, 0, 0], "angle": -75}}
+  },
+  "path": [
+    {"pos": [-4.675, 7.22, 13.6], "rot": [-90, 180, 0]},
+    {"pos": [-4.675, 7.22, -3.6], "rot": [-90, 180, 0]},
+    {"pos": [-4.675, 5.72, -3.6], "rot": [-90, 180, 0]}
+  ],
+  "steps": [
+    {"time": 0.3, "open": ["door"]},
+    {"time": 0.6, "media": [0, 1]},
+    {"time": 0.25, "media": [1, 2]},
+    {"time": 0.3, "close": ["door"]}
+  ]
+}

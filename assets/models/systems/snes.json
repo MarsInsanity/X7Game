@@ -1,0 +1,98 @@
+{
+  "console": "../consoles/snes.obj",
+  "media": "../media/snes.obj",
+  "view": [
+    30,
+    28
+  ],
+  "parts": {
+    "flap_front": {
+      "hinge": {
+        "pivot": [
+          0,
+          7.05,
+          0.4
+        ],
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "angle": -90
+      }
+    },
+    "flap_back": {
+      "hinge": {
+        "pivot": [
+          0,
+          7.05,
+          -2.1
+        ],
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "angle": 90
+      }
+    }
+  },
+  "path": [
+    {
+      "pos": [
+        0,
+        15.0,
+        -0.85
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "pos": [
+        0,
+        7.4,
+        -0.85
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "pos": [
+        0,
+        3.0,
+        -0.85
+      ],
+      "rot": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.45,
+      "media": [
+        0,
+        1
+      ],
+      "open": [
+        "flap_front",
+        "flap_back"
+      ]
+    },
+    {
+      "time": 0.65,
+      "media": [
+        1,
+        2
+      ]
+    }
+  ]
+}

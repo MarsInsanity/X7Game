@@ -3,15 +3,16 @@
 sheet.py - put model previews side by side on one contact sheet, each with
 its name underneath. Pure Python, reads the PNGs render.py writes.
 
-    python tools/models/sheet.py OUT.png COLUMNS "LABEL=preview.png" ...
+    python tools/models/sheet.py [--tile WxH] OUT.png COLUMNS "LABEL=preview.png" ...
+
+Each preview is shrunk to the tile (default 320x240, half a 640x480
+preview); use --tile 1280x240 for the four-frame insertion strips.
 """
 import os
-import struct
 import sys
-import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render import write_png  # noqa: E402
+from render import read_png, write_png  # noqa: E402
 
 # 3x5 pixel font, enough for the system names
 FONT = {
@@ -31,46 +32,13 @@ FONT = {
 }
 
 
-def read_png(path):
-    data = open(path, 'rb').read()
-    pos, idat, w, h = 8, b'', 0, 0
-    while pos < len(data):
-        n, = struct.unpack('>I', data[pos:pos + 4])
-        t = data[pos + 4:pos + 8]
-        d = data[pos + 8:pos + 8 + n]
-        if t == b'IHDR':
-            w, h = struct.unpack('>II', d[:8])
-        elif t == b'IDAT':
-            idat += d
-        pos += 12 + n
-    raw = zlib.decompress(idat)
-    stride = w * 3
-    img, prev = [], bytearray(stride)
-    for y in range(h):
-        f = raw[y * (stride + 1)]
-        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-        for i in range(stride):           # PNG filters (render.py writes 0)
-            a = line[i - 3] if i >= 3 else 0
-            b = prev[i]
-            c = prev[i - 3] if i >= 3 else 0
-            if f == 1:
-                line[i] = (line[i] + a) & 255
-            elif f == 2:
-                line[i] = (line[i] + b) & 255
-            elif f == 3:
-                line[i] = (line[i] + (a + b) // 2) & 255
-            elif f == 4:
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
-        img.append([tuple(line[x * 3:x * 3 + 3]) for x in range(w)])
-        prev = line
-    return img
-
-
 def main():
-    out, cols, items = sys.argv[1], int(sys.argv[2]), sys.argv[3:]
+    args = sys.argv[1:]
     tw, th, lab = 320, 240, 16
+    if args[0] == '--tile':
+        tw, th = (int(x) for x in args[1].split('x'))
+        args = args[2:]
+    out, cols, items = args[0], int(args[1]), args[2:]
     rows = (len(items) + cols - 1) // cols
     W, H = cols * tw, rows * (th + lab)
     sheet = [[(16, 18, 24)] * W for _ in range(H)]

@@ -1,0 +1,18 @@
+{
+  "console": "../consoles/megadrive.obj",
+  "media": "../media/megadrive.obj",
+  "view": [30, 26],
+  "parts": {
+    "flap_front": {"hinge": {"pivot": [2.9, 6.46, -4.45], "axis": [1, 0, 0], "angle": -90}},
+    "flap_back": {"hinge": {"pivot": [2.9, 6.46, -6.75], "axis": [1, 0, 0], "angle": 90}}
+  },
+  "path": [
+    {"pos": [2.9, 18.8, -5.6], "rot": [0, 0, 0]},
+    {"pos": [2.9, 7.15, -5.6], "rot": [0, 0, 0]},
+    {"pos": [2.9, 1.0, -5.6], "rot": [0, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.35, "media": [0, 1], "open": ["flap_front", "flap_back"]},
+    {"time": 0.55, "media": [1, 2]}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "console": "../consoles/mastersystem.obj",
+  "media": "../media/mastersystem.obj",
+  "view": [28, 32],
+  "parts": {
+    "flap": {"hinge": {"pivot": [4.8, 5.2, -2.93], "axis": [1, 0, 0], "angle": 90}}
+  },
+  "path": [
+    {"pos": [4.8, 16.6, -1.7], "rot": [0, 0, 0]},
+    {"pos": [4.8, 5.66, -1.7], "rot": [0, 0, 0]},
+    {"pos": [4.8, 0.65, -1.7], "rot": [0, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.55, "media": [0, 1], "open": ["flap"]},
+    {"time": 0.6, "media": [1, 2]}
+  ]
+}

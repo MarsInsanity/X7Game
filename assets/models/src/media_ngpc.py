@@ -1,108 +1,80 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Neo Geo Pocket Color cartridge: the small light-grey (silver) card-like
-cartridge with a rounded top and a ridged grip band (the monochrome Neo Geo
-Pocket's carts are black), standing upright, label to +Z, contacts edge at
-y = 0."""
-import os, sys
+"""Neo Geo Pocket Color cartridge, standing upright, picture label to +Z,
+connector edge at y = 0.
+
+Real size about 4.8 x 4.5 x 0.8 cm. Signature features: the dark charcoal
+card with a slightly wider and thicker grip lip across the top (it
+overhangs the front, its top front edge is rounded off, horizontal grooves
+across its face), the wide landscape label in the middle of the front, and
+below it a band with two recessed plates left and right and a
+down-pointing insert arrow between them. The connector contacts sit at
+the bottom of the back.
+
+Insertion: the slab below the lip (x -2.4..2.4, y 0..3.6, z -0.4..0.4) is
+a plain closed box that goes into the slot on the top back of the console,
+connector edge first; the lip (x -2.48..2.48, y 3.6..4.5, z -0.4..0.55)
+stays outside as the grip. The back is flat from bottom to top.
+"""
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
-from x7model import Model
+from x7model import Model  # noqa: E402
 
-SHELL = (178, 182, 194)     # light silver-grey shell
-EDGE = (132, 136, 150)      # side / top faces, so the outline reads
-EMBOSS = (220, 224, 234)    # raised grip ribs and insert arrow
-LABEL = (244, 242, 236)     # white label border
-SKY = (40, 64, 168)         # picture area
-GROUND = (240, 128, 32)     # picture lower part
-BAND = (208, 32, 48)        # title band across the top of the label
-ACC1 = (248, 208, 32)       # colour-logo accent stripes
-ACC2 = (48, 176, 88)
-PCB = (24, 96, 48)
-GOLD = (216, 176, 64)
+SHELL = (82, 84, 92)        # charcoal grey shell
+LIP = (100, 102, 110)       # grip lip, a touch lighter so it reads as its own part
+GROOVE = (34, 36, 42)       # grooves across the lip
+PLATE = (64, 66, 76)        # recessed plates in the bottom band
+ARROW = (40, 42, 50)        # insert arrow
+LABEL = (236, 234, 228)     # plain label colour (picture fallback)
+SLOT = (22, 22, 28)         # connector opening (bottom, back)
+GOLD = (216, 176, 64)       # contacts
 
-W, H = 4.4, 4.8
+W, H = 4.8, 4.5             # body width, overall height
 hw = W / 2
-R = 0.5                     # rounded top corners
-ZF, ZB, ZM = 0.28, -0.36, -0.12   # recessed label face, back, back of the front shell
-ZR = 0.36                   # raised frame around the label
-CX = 1.75                   # half width of the contacts opening on the back
-CY = 0.6                    # height of the contacts opening
-LX, LY0, LY1 = 1.85, 0.45, 3.75   # label recess
-GY = 3.95                   # grip band starts here (front and back)
+ZB, ZF = -0.4, 0.4          # back, front of the body (0.8 cm thick)
+LY = 3.6                    # grip lip from here up
+LO = 0.08                   # lip overhang left and right
+ZL = ZF + 0.15              # lip front (overhangs the front by 1.5 mm)
+LX0, LX1, LB0, LB1 = -2.05, 2.05, 1.45, 3.35   # the label (4.1 x 1.9 cm)
 
 m = Model('ngpc', 'media')
 
+# body slab: the part that goes into the slot (top hidden under the lip,
+# dark bottom face = the connector opening seen from below)
+m.box(-hw, 0, ZB, hw, LY, ZF, SHELL, faces={'top': None, 'bottom': SLOT})
 
-def face(pts, z, color, nz=1):
-    """flat face at depth z facing +Z (nz = 1) or -Z (nz = -1)"""
-    return m.polygon([(x, y, z) for x, y in pts], color, normal=(0, 0, nz))
+# grip lip: side profile (z, y) with the rounded-off top front edge
+lip = [(ZB, LY), (ZL, LY), (ZL, 4.24), (ZL - 0.06, 4.4), (ZL - 0.18, 4.475), (ZL - 0.34, H), (ZB, H)]
+m.extrude_yz(lip, -hw - LO, hw + LO, LIP)
+
+# grooves across the lip face
+for i in range(4):
+    y = 3.7 + i * 0.14
+    m.decal_xy([(-2.0, y), (2.0, y), (2.0, y + 0.075), (-2.0, y + 0.075)], ZL, GROOVE, lift=0.02)
+
+# the label: one picture area, upright (u left to right, v bottom to top)
+m.image_xy(LX0, LB0, LX1, LB1, ZF, fallback=LABEL, lift=0.03)
+
+# bottom band: two recessed plates and the down-pointing insert arrow
+m.decal_xy(Model.rounded_rect(-2.15, 0.55, -0.85, 1.22, 0.1, segments=1), ZF, PLATE, lift=0.02)
+m.decal_xy(Model.rounded_rect(0.4, 0.55, 2.05, 1.22, 0.1, segments=1), ZF, PLATE, lift=0.02)
+m.decal_xy([(-0.66, 1.18), (0.2, 1.18), (-0.23, 0.6)], ZF, ARROW, lift=0.02)
+
+# parting line of the two shell halves just above the bottom edge
+m.decal_xy([(-hw, 0.2), (hw, 0.2), (hw, 0.24), (-hw, 0.24)], ZF, PLATE, lift=0.02)
+
+# back: connector opening along the bottom edge with gold contacts
+def back_rect(x0, y0, x1, y1, z, col):
+    m.polygon([(x0, y0, z), (x0, y1, z), (x1, y1, z), (x1, y0, z)], col, normal=(0, 0, -1))
 
 
-def top_arc(y0):
-    """the rounded top edge, right to left, from height y0 up"""
-    pts = Model.rounded_rect(-hw, y0 - 2 * R, hw, H, R, segments=2)
-    return pts[:6]          # the two top corners (right, then left)
-
-
-# front half of the shell, up to the raised frame (front faces built below)
-front = [(-hw, 0), (-CX, 0), (CX, 0), (hw, 0)] + top_arc(GY)
-m.extrude_xy(front, ZM, ZR, SHELL, front=False, back=False, side=EDGE)
-# back half: same outline with the contacts opening at the bottom
-back = [(-hw, 0), (-CX, 0), (-CX, CY), (CX, CY), (CX, 0), (hw, 0)] + top_arc(GY)
-m.extrude_xy(back, ZB, ZM, SHELL, front=False, side=EDGE)
-# circuit board face in the opening, with gold contacts
-face([(CX, 0), (-CX, 0), (-CX, CY), (CX, CY)], ZM, PCB, -1)
-n = 6
-pitch = (2 * CX - 0.3) / n
+back_rect(-1.9, 0.0, 1.9, 0.5, ZB - 0.02, SLOT)
+n = 8
 for i in range(n):
-    x0 = CX - 0.15 - i * pitch - 0.06
-    x1 = x0 - pitch + 0.16
-    face([(x0, 0.04), (x1, 0.04), (x1, CY - 0.15), (x0, CY - 0.15)], ZM - 0.03, GOLD, -1)
+    x0 = -1.75 + i * 3.5 / n + 0.06
+    back_rect(x0, 0.06, x0 + 3.5 / n - 0.12, 0.42, ZB - 0.04, GOLD)
 
-# raised frame around the recessed label (its outer sides are the shell's):
-# top part (rounded) with the grip band, bottom strip, two side strips, and the
-# step faces down into the recess
-face([(-hw, LY1), (hw, LY1)] + top_arc(GY), ZR, SHELL)
-face([(-hw, 0), (-CX, 0), (CX, 0), (hw, 0), (hw, LY0), (LX, LY0), (-LX, LY0), (-hw, LY0)], ZR, SHELL)
-face([(-hw, LY0), (-LX, LY0), (-LX, LY1), (-hw, LY1)], ZR, SHELL)
-face([(LX, LY0), (hw, LY0), (hw, LY1), (LX, LY1)], ZR, SHELL)
-m.quad((-LX, LY1, ZF), (LX, LY1, ZF), (LX, LY1, ZR), (-LX, LY1, ZR), EDGE)    # faces down
-m.quad((LX, LY0, ZF), (-LX, LY0, ZF), (-LX, LY0, ZR), (LX, LY0, ZR), EDGE)    # faces up
-m.quad((-LX, LY0, ZF), (-LX, LY1, ZF), (-LX, LY1, ZR), (-LX, LY0, ZR), EDGE)  # faces +x
-m.quad((LX, LY1, ZF), (LX, LY0, ZF), (LX, LY0, ZR), (LX, LY1, ZR), EDGE)      # faces -x
-
-# front grip band: two raised ribs left and right of an insert arrow
-for i in range(2):
-    y = 4.05 + i * 0.28
-    m.box(-1.6, y, ZR, -0.45, y + 0.12, ZR + 0.05, EMBOSS, faces={'back': None, 'bottom': None})
-    m.box(0.45, y, ZR, 1.6, y + 0.12, ZR + 0.05, EMBOSS, faces={'back': None, 'bottom': None})
-m.extrude_xy([(-0.28, 4.48), (0.28, 4.48), (0.0, 4.02)], ZR, ZR + 0.05, EMBOSS, back=False)
-
-# label filling the recess as full-width bands with thin white side margins
-# (tiled, no decal stacked on a big face; shared edge points, no T-junctions)
-ax0, ax1 = -LX + 0.15, LX - 0.15
-y0, gy, sy, ty, ey = LY0 + 0.1, 0.78, 1.35, 3.0, LY1 - 0.1
-q = (ax1 - ax0) / 4
-xs = [ax0 + k * q for k in range(5)]
-face([(-LX, LY0), (LX, LY0), (LX, y0)] + [(x, y0) for x in reversed(xs)] + [(-LX, y0)], ZF, LABEL)
-face([(-LX, ey)] + [(x, ey) for x in (ax0, ax1)] + [(LX, ey), (LX, LY1), (-LX, LY1)], ZF, LABEL)
-face([(-LX, y0), (ax0, y0), (ax0, gy), (ax0, sy), (ax0, ty), (ax0, ey), (-LX, ey)], ZF, LABEL)
-face([(ax1, y0), (LX, y0), (LX, ey), (ax1, ey), (ax1, ty), (ax1, sy), (ax1, gy)], ZF, LABEL)
-# four-colour strip along the bottom (the "Color" idea): red, yellow, green, blue
-for k, c in enumerate((BAND, ACC1, ACC2, SKY)):
-    face([(xs[k], y0), (xs[k + 1], y0), (xs[k + 1], gy), (xs[k], gy)], ZF, c)
-face([(x, gy) for x in xs] + [(ax1, sy), (ax0, sy)], ZF, GROUND)
-face([(ax0, sy), (ax1, sy), (ax1, ty), (ax0, ty)], ZF, SKY)
-face([(ax0, ty), (ax1, ty), (ax1, ey), (ax0, ey)], ZF, BAND)
-# a white title block in the band and a small sun in the picture (thin raised parts)
-m.box(-1.2, 3.2, ZF, 0.6, 3.48, ZF + 0.03, LABEL, faces={'back': None, 'bottom': None})
-m.cylinder_z(0.95, 2.35, 0.32, ZF, ZF + 0.03, ACC1, segments=8, back=False)
-# a hill on the horizon
-m.extrude_xy([(-1.7, sy), (0.2, sy), (-0.6, 2.05)], ZF, ZF + 0.03, ACC2, back=False, side=False)
-
-# back: grip ribs across the top band
-for i in range(3):
-    y = 4.0 + i * 0.26
-    m.box(-1.5, y, ZB - 0.05, 1.5, y + 0.12, ZB, EDGE, faces={'front': None, 'bottom': None})
-
-print(m.stats())
-print(m.save())
+if __name__ == '__main__':
+    print(m.stats())
+    print(m.save())

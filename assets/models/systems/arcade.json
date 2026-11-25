@@ -1,0 +1,17 @@
+{
+  "console": "../consoles/arcade.obj",
+  "media": "../media/arcade.obj",
+  "view": [148, 24],
+  "parts": {
+    "hatch": {"hinge": {"pivot": [0, 43.0, -37.8], "axis": [1, 0, 0], "angle": -90}}
+  },
+  "path": [
+    {"pos": [0, 44.95, -52.5], "rot": [-90, 0, 0]},
+    {"pos": [0, 44.95, -7.05], "rot": [-90, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.35, "open": ["hatch"]},
+    {"time": 0.8, "media": [0, 1]},
+    {"time": 0.35, "close": ["hatch"]}
+  ]
+}

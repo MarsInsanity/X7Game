@@ -1,0 +1,18 @@
+{
+  "console": "../consoles/neogeo.obj",
+  "media": "../media/neogeo.obj",
+  "view": [28, 30],
+  "parts": {
+    "flap_front": {"hinge": {"pivot": [0, 5.55, -3.87], "axis": [1, 0, 0], "angle": -90}},
+    "flap_back": {"hinge": {"pivot": [0, 5.55, -7.33], "axis": [1, 0, 0], "angle": 90}}
+  },
+  "path": [
+    {"pos": [0, 19.0, -5.6], "rot": [0, 0, 0]},
+    {"pos": [0, 6.3, -5.6], "rot": [0, 0, 0]},
+    {"pos": [0, 0.4, -5.6], "rot": [0, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.45, "media": [0, 1], "open": ["flap_front", "flap_back"]},
+    {"time": 0.6, "media": [1, 2]}
+  ]
+}

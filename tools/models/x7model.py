@@ -10,9 +10,18 @@ Conventions (every model):
     (the object stands on y = 0, centred on x = 0, z = 0)
   * triangles only, wound counter-clockwise seen from outside (the frontend
     culls back faces)
-  * flat colours only, no textures; every colour is an exact RGB565 colour
-    (the frontend runs in 16-bit), stored as an MTL material "c_RRGGBB"
+  * flat colours; every colour is an exact RGB565 colour (the frontend runs
+    in 16-bit), stored as an MTL material "c_RRGGBB"
+  * the one exception is the image area (material "image", with texture
+    coordinates): the frontend draws the game's picture there, e.g. on a
+    cartridge label (image_rect / image_xy / image_ring / image_polygon).
+    u runs along the picture's width (left to right), v along its height
+    (bottom to top, the OBJ convention)
   * no text, logos or trademarks: labels are plain coloured areas
+  * moving parts (a lid, a door, a tray) are built inside `with m.part('lid'):`
+    and saved as OBJ groups ("g lid"); everything else is group "body".
+    Parts are modelled in their closed position; how they move is in the
+    system file (assets/models/systems/<id>.json, see render.py)
 
 Typical use:
 
@@ -28,9 +37,11 @@ Run tools/models/render.py on the .obj to see it.
 """
 import math
 import os
+import re
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 KIND_DIRS = {'console': 'consoles', 'media': 'media'}
+IMAGE = 'image'           # the "colour" of image-area triangles
 
 
 def rgb565(r, g, b):
@@ -121,7 +132,12 @@ class Model:
         self.name = name
         self.kind = kind
         self.verts = []          # (x, y, z)
-        self.tris = []           # (i0, i1, i2, colour)
+        self.tris = []           # (i0, i1, i2, colour or IMAGE)
+        self.parts = {}          # triangle index -> part name (absent = 'body')
+        self.uvs = {}            # triangle index -> ((u, v), (u, v), (u, v)) for IMAGE triangles
+        self.image_fallback = (200, 200, 200)   # drawn when there is no picture
+        self.image_frames = []   # (width_cm, height_cm) of each image area
+        self._part = 'body'
         self._vmap = {}
 
     # ----------------------------------------------------------- basics
@@ -136,7 +152,7 @@ class Model:
 
     def tri(self, a, b, c, color):
         """One triangle a, b, c (counter-clockwise seen from its front)."""
-        col = rgb565(*color)
+        col = IMAGE if color == IMAGE else rgb565(*color)
         ia, ib, ic = self._v(a), self._v(b), self._v(c)
         if len({ia, ib, ic}) < 3:
             return []
@@ -144,7 +160,91 @@ class Model:
         if _dot(n, n) < 1e-14:
             return []
         self.tris.append((ia, ib, ic, col))
+        if self._part != 'body':
+            self.parts[len(self.tris) - 1] = self._part
         return [len(self.tris) - 1]
+
+    def part(self, name):
+        """Build a moving part:  with m.part('lid'): m.box(...)
+        Names: lower case letters, digits, underscore."""
+        assert re.match(r'^[a-z][a-z0-9_]*$', name), name
+        model = self
+
+        class _Part:
+            def __enter__(self):
+                self.prev = model._part
+                model._part = name
+                return model
+
+            def __exit__(self, *exc):
+                model._part = self.prev
+        return _Part()
+
+    def part_of(self, t):
+        return self.parts.get(t, 'body')
+
+    # ----------------------------------------------------------- image area
+    def image_polygon(self, pts, frame, fallback=None, normal=None):
+        """An image area: a flat polygon (3D points, like polygon()) showing
+        the game's picture. frame = (bottom_left, bottom_right, top_left), 3D
+        points of the picture's corners in the same plane; each vertex gets
+        its texture coordinates by projection onto that frame, so the
+        polygon may be any shape inside it (a rounded label, part of a ring).
+        `fallback` is the colour drawn when there is no picture."""
+        o, pu, pv = frame
+        U, V = _sub(pu, o), _sub(pv, o)
+        uu, vv = _dot(U, U), _dot(V, V)
+        if fallback is not None:
+            self.image_fallback = rgb565(*fallback)
+        ids = self.polygon(pts, IMAGE, normal=normal)
+        for t in ids:
+            uv = []
+            for i in self.tris[t][:3]:
+                d = _sub(self.verts[i], o)
+                uv.append((round(_dot(d, U) / uu, 5), round(_dot(d, V) / vv, 5)))
+            self.uvs[t] = tuple(uv)
+        self.image_frames.append((math.sqrt(uu), math.sqrt(vv)))
+        return ids
+
+    def image_rect(self, origin, u, v, fallback=None):
+        """A rectangular image area: corners origin (the picture's bottom
+        left), origin+u (bottom right), origin+u+v, origin+v (top left). It
+        faces the side u x v points to (u right, v up as seen from the
+        front)."""
+        o = origin
+        p1 = (o[0] + u[0], o[1] + u[1], o[2] + u[2])
+        p3 = (o[0] + v[0], o[1] + v[1], o[2] + v[2])
+        p2 = (p1[0] + v[0], p1[1] + v[1], p1[2] + v[2])
+        return self.image_polygon([o, p1, p2, p3], (o, p1, p3), fallback, normal=_cross(u, v))
+
+    def image_xy(self, x0, y0, x1, y1, z, fallback=None, lift=0.03, outline=None):
+        """The usual cartridge label: an image area facing +Z at depth z
+        (drawn `lift` cm in front of it), the picture filling the rectangle
+        x0..x1, y0..y1. `outline` (2D x, y points inside that rectangle) cuts
+        it to another shape, e.g. Model.rounded_rect(...)."""
+        zz = z + lift
+        pts = outline or [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        return self.image_polygon([(x, y, zz) for x, y in pts],
+                                  ((x0, y0, zz), (x1, y0, zz), (x0, y1, zz)), fallback, normal=(0, 0, 1))
+
+    def image_ring(self, cx, cy, z, r0, r1, segments=16, fallback=None):
+        """A disc label: a ring (r0 = hole, r1 = outer edge) facing +Z at
+        depth z, the picture filling the square around the outer circle."""
+        frame = ((cx - r1, cy - r1, z), (cx + r1, cy - r1, z), (cx - r1, cy + r1, z))
+        o, pu, pv = frame
+        if fallback is not None:
+            self.image_fallback = rgb565(*fallback)
+        ids = []
+        for i in range(segments):
+            a0, a1 = 2 * math.pi * i / segments, 2 * math.pi * (i + 1) / segments
+            q = [(cx + r0 * math.cos(a0), cy + r0 * math.sin(a0), z), (cx + r1 * math.cos(a0), cy + r1 * math.sin(a0), z),
+                 (cx + r1 * math.cos(a1), cy + r1 * math.sin(a1), z), (cx + r0 * math.cos(a1), cy + r0 * math.sin(a1), z)]
+            for t in self.quad(*q, IMAGE):
+                self.uvs[t] = tuple(((self.verts[k][0] - o[0]) / (2 * r1), (self.verts[k][1] - o[1]) / (2 * r1))
+                                    for k in self.tris[t][:3])
+                ids.append(t)
+        self.image_frames.append((2 * r1, 2 * r1))
+        return ids
 
     def quad(self, a, b, c, d, color):
         """a, b, c, d counter-clockwise seen from the front."""
@@ -330,14 +430,20 @@ class Model:
 
     # ----------------------------------------------------------- output
     def stats(self):
-        used = sorted({t[3] for t in self.tris})
+        used = sorted({t[3] for t in self.tris if t[3] != IMAGE})
         xs = [v[0] for v in self.verts] or [0]
         ys = [v[1] for v in self.verts] or [0]
         zs = [v[2] for v in self.verts] or [0]
+        parts = {}
+        for t in range(len(self.tris)):
+            parts[self.part_of(t)] = parts.get(self.part_of(t), 0) + 1
         return {
             'triangles': len(self.tris),
             'vertices': len({i for t in self.tris for i in t[:3]}),
             'colors': len(used),
+            'image_triangles': sum(1 for t in self.tris if t[3] == IMAGE),
+            'image_aspect': round(self.image_frames[0][0] / self.image_frames[0][1], 4) if self.image_frames else None,
+            'parts': parts,
             'size_cm': (round(max(xs) - min(xs), 2), round(max(ys) - min(ys), 2), round(max(zs) - min(zs), 2)),
             'min_y': round(min(ys), 3),
         }
@@ -351,33 +457,68 @@ class Model:
         # drop unused vertices, renumber
         used = sorted({i for t in self.tris for i in t[:3]})
         newi = {o: n + 1 for n, o in enumerate(used)}
-        colors = sorted({t[3] for t in self.tris})
+        colors = sorted({t[3] for t in self.tris if t[3] != IMAGE})
+        if any(t[3] == IMAGE for t in self.tris):
+            colors.append(IMAGE)
+        parts = ['body'] + sorted({p for p in self.parts.values() if p != 'body'})
         s = self.stats()
         with open(path, 'w', newline='\n') as f:
             f.write('# X7 Game low-poly model: %s (%s)\n' % (self.name, self.kind))
             f.write('# %d triangles, %d vertices, %d colours (RGB565); cm, Y up, front +Z\n'
                     % (s['triangles'], s['vertices'], s['colors']))
+            if s['image_aspect']:
+                f.write('# image_aspect %.4f (width / height of the picture area)\n' % s['image_aspect'])
             f.write('mtllib %s.mtl\no %s\n' % (base, self.name))
             for o in used:
                 v = self.verts[o]
                 f.write('v %.4f %.4f %.4f\n' % v)
-            for c in colors:
-                f.write('usemtl %s\n' % color_name(c))
-                for ia, ib, ic, cc in self.tris:
-                    if cc == c:
-                        f.write('f %d %d %d\n' % (newi[ia], newi[ib], newi[ic]))
+            vt = []
+            for t in sorted(self.uvs):
+                if self.tris[t][3] == IMAGE:
+                    for uv in self.uvs[t]:
+                        f.write('vt %.5f %.5f\n' % uv)
+                    vt.append(t)
+            vti = {t: 1 + 3 * n for n, t in enumerate(vt)}
+            for p in parts:
+                tl = [t for t in range(len(self.tris)) if self.part_of(t) == p]
+                if not tl:
+                    continue
+                f.write('g %s\n' % p)
+                for c in colors:
+                    sel = [t for t in tl if self.tris[t][3] == c]
+                    if not sel:
+                        continue
+                    f.write('usemtl %s\n' % (c if c == IMAGE else color_name(c)))
+                    for t in sel:
+                        ia, ib, ic = self.tris[t][:3]
+                        if c == IMAGE:
+                            k = vti[t]
+                            f.write('f %d/%d %d/%d %d/%d\n' % (newi[ia], k, newi[ib], k + 1, newi[ic], k + 2))
+                        else:
+                            f.write('f %d %d %d\n' % (newi[ia], newi[ib], newi[ic]))
         with open(os.path.splitext(path)[0] + '.mtl', 'w', newline='\n') as f:
             f.write('# X7 Game model colours: every one an exact RGB565 colour\n')
             for c in colors:
+                if c == IMAGE:
+                    fb = self.image_fallback
+                    f.write('# the game\'s picture; Kd is the colour drawn when there is none\n')
+                    f.write('newmtl image\nKd %.6f %.6f %.6f\nKa 0 0 0\nKs 0 0 0\nillum 1\nmap_Kd image.png\n\n'
+                            % (fb[0] / 255, fb[1] / 255, fb[2] / 255))
+                    continue
                 f.write('newmtl %s\nKd %.6f %.6f %.6f\nKa 0 0 0\nKs 0 0 0\nillum 1\n\n'
                         % (color_name(c), c[0] / 255, c[1] / 255, c[2] / 255))
         return path
 
 
-def load_obj(path):
-    """Read an OBJ written by Model.save (or any triangle OBJ + MTL with Kd
-    colours): returns (verts, tris) with tris = (i0, i1, i2, (r, g, b))."""
-    verts, tris, mats, cur = [], [], {}, (200, 200, 200)
+def load_model(path):
+    """Read an OBJ written by Model.save. Returns a dict:
+      verts: [(x, y, z)], uvs: [(u, v)],
+      tris: [(i0, i1, i2, (r, g, b), part, uv)] where uv is None or the
+            three uv indices of an image-area triangle (its colour is then
+            the fallback colour),
+      image_aspect: width / height of the picture area or None."""
+    verts, uvs, tris, mats = [], [], [], {}
+    cur, cur_name, part, aspect = (200, 200, 200), '', 'body', None
     d = os.path.dirname(path)
     with open(path) as f:
         lines = f.read().splitlines()
@@ -392,16 +533,33 @@ def load_obj(path):
                     elif ml.startswith('Kd ') and name:
                         r, g, b = (float(x) for x in ml.split()[1:4])
                         mats[name] = (int(round(r * 255)), int(round(g * 255)), int(round(b * 255)))
+        elif ln.startswith('# image_aspect '):
+            aspect = float(ln.split()[2])
     for ln in lines:
         p = ln.split()
         if not p:
             continue
         if p[0] == 'v':
             verts.append((float(p[1]), float(p[2]), float(p[3])))
+        elif p[0] == 'vt':
+            uvs.append((float(p[1]), float(p[2])))
+        elif p[0] == 'g':
+            part = p[1] if len(p) > 1 else 'body'
         elif p[0] == 'usemtl':
+            cur_name = p[1]
             cur = mats.get(p[1], (200, 200, 200))
         elif p[0] == 'f':
             idx = [int(x.split('/')[0]) - 1 for x in p[1:]]
+            tix = [int(x.split('/')[1]) - 1 if '/' in x and x.split('/')[1] else None for x in p[1:]]
+            img = cur_name == IMAGE and None not in tix
             for k in range(1, len(idx) - 1):
-                tris.append((idx[0], idx[k], idx[k + 1], cur))
-    return verts, tris
+                tris.append((idx[0], idx[k], idx[k + 1], cur, part,
+                             (tix[0], tix[k], tix[k + 1]) if img else None))
+    return {'verts': verts, 'uvs': uvs, 'tris': tris, 'image_aspect': aspect}
+
+
+def load_obj(path):
+    """Read an OBJ written by Model.save (or any triangle OBJ + MTL with Kd
+    colours): returns (verts, tris) with tris = (i0, i1, i2, (r, g, b))."""
+    m = load_model(path)
+    return m['verts'], [t[:4] for t in m['tris']]

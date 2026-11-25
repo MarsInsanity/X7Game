@@ -1,0 +1,14 @@
+{
+  "console": "../consoles/wswanc.obj",
+  "media": "../media/wswanc.obj",
+  "view": [-150, 24],
+  "parts": {},
+  "path": [
+    {"pos": [0, 8.0, -0.7], "rot": [0, 180, 0]},
+    {"pos": [0, 6.0, -0.7], "rot": [0, 180, 0]},
+    {"pos": [0, 3.13, -0.7], "rot": [0, 180, 0]}
+  ],
+  "steps": [
+    {"time": 0.9, "media": [0, 2]}
+  ]
+}

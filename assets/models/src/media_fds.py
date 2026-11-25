@@ -1,22 +1,31 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Famicom Disk System disk card: the yellow double-sided disk standing
-upright like on a shelf, side A facing +Z."""
+"""Famicom Disk System disk card (7.6 x 9.0 x 0.5 cm), standing upright like
+on a shelf, side A facing +Z.
+
+As on the real card: the head window (a narrow vertical slot) and the hub
+sit in a U-shaped recess that runs from the top edge (the end that goes
+into the drive first); the label recess (the game's picture) is below the
+hub, and the embossed grip band runs along the bottom edge (the end that
+stays out of the drive). Write-protect holes in the two top corners,
+latch notches in both sides near the top, small steps near the bottom.
+
+Insertion: lay the card flat, label up (rotate -90 degrees about X: the top
+edge y = 9 goes to -Z), and slide it window end first into the drive."""
 import math
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-YELLOW = (244, 200, 30)
-EDGE = (196, 150, 16)        # shell edges: darker so the card reads as solid
-EMBOSS = (214, 166, 22)      # recessed brand band at the bottom (no text)
-LABEL = (242, 238, 222)
-BAND_R = (210, 40, 40)
-BAND_B = (40, 70, 170)
-RIM = (150, 108, 10)         # window bevel
-MEDIA = (92, 52, 26)         # exposed brown magnetic disk
-HUB = (176, 178, 188)
-HUB_IN = (64, 64, 72)
+YELLOW = (255, 198, 22)      # the shell
+EDGE = (200, 136, 8)         # shell edges: darker so the card reads as solid
+SHADE = (228, 158, 12)       # recessed areas (U recess, label recess, grip band)
+HI = YELLOW                  # raised grip blocks (the embossed lettering, no text)
+LABEL = (238, 232, 212)      # plain label: the picture's fallback, side B label
+WINDOW = (92, 78, 60)        # exposed brown-grey magnetic disk
+HUB = (236, 232, 218)        # off-white hub ring
+METAL = (160, 162, 170)      # metal hub centre
+HOLE = (34, 26, 12)          # spindle hole, write-protect holes
 
 W, H, T = 7.6, 9.0, 0.5
 X0, X1 = -W / 2, W / 2
@@ -24,96 +33,81 @@ Z0, Z1 = -T / 2, T / 2
 
 m = Model('fds', 'media')
 
-# shell outline (XY): chamfered corners, two notches on each side near the top
-c = 0.35                  # corner chamfer
-ny0, ny1, nd = 6.9, 7.5, 0.3   # side notch height range and depth
+# ---------------------------------------------------------------- shell
+c = 0.25                       # bottom corner chamfer
+ct = 0.15                      # top corner chamfer
+ny0, ny1, nd = 7.55, 8.1, 0.22     # latch notches near the top
+sy0, sy1, sd = 1.2, 1.6, 0.12      # small steps near the bottom
 outline = [
     (X0 + c, 0), (X1 - c, 0), (X1, c),
+    (X1, sy0), (X1 - sd, sy0), (X1 - sd, sy1), (X1, sy1),
     (X1, ny0), (X1 - nd, ny0), (X1 - nd, ny1), (X1, ny1),
-    (X1, H - c), (X1 - c, H), (X0 + c, H), (X0, H - c),
+    (X1, H - ct), (X1 - ct, H), (X0 + ct, H), (X0, H - ct),
     (X0, ny1), (X0 + nd, ny1), (X0 + nd, ny0), (X0, ny0),
+    (X0, sy1), (X0 + sd, sy1), (X0 + sd, sy0), (X0, sy0),
     (X0, c),
 ]
-m.extrude_xy(outline, Z0, Z1, YELLOW, front=False, back=False, side=EDGE)
-# the big faces are built from horizontal bands so every triangle stays
-# small and well shaped (long thin slivers from a concave outline make the
-# depth of the decals on top of them unreliable)
-bands = [
-    [(X0 + c, 0), (X1 - c, 0), (X1, c), (X0, c)],
-    [(X0, c), (X1, c), (X1, 3.4), (X0, 3.4)],
-    [(X0, 3.4), (X1, 3.4), (X1, ny0), (X1 - nd, ny0), (X0 + nd, ny0), (X0, ny0)],
-    [(X0 + nd, ny0), (X1 - nd, ny0), (X1 - nd, ny1), (X0 + nd, ny1)],
-    [(X0, ny1), (X0 + nd, ny1), (X1 - nd, ny1), (X1, ny1), (X1, H - c), (X0, H - c)],
-    [(X0, H - c), (X1, H - c), (X1 - c, H), (X0 + c, H)],
-]
-for b in bands:
-    m.polygon([(x, y, Z1) for x, y in b], YELLOW, normal=(0, 0, 1))
-    m.polygon([(x, y, Z0) for x, y in b], YELLOW, normal=(0, 0, -1))
+m.extrude_xy(outline, Z0, Z1, YELLOW, front=YELLOW, back=YELLOW, side=EDGE)
 
 
-def stadium(cx, cy, w, h, seg=3):
-    """horizontal rounded slot outline"""
-    r = h / 2
-    pts = []
-    for k in range(seg + 1):                       # right cap
-        a = -math.pi / 2 + math.pi * k / seg
-        pts.append((cx + w / 2 - r + r * math.cos(a), cy + r * math.sin(a)))
-    for k in range(seg + 1):                       # left cap
-        a = math.pi / 2 + math.pi * k / seg
-        pts.append((cx - w / 2 + r + r * math.cos(a), cy + r * math.sin(a)))
-    return pts
-
-
-def circle(cx, cy, r, seg):
-    return [(cx + r * math.cos(2 * math.pi * k / seg + math.pi / seg),
-             cy + r * math.sin(2 * math.pi * k / seg + math.pi / seg)) for k in range(seg)]
+# ---------------------------------------------------------------- faces
+def circle(cx, cy, r, seg, phase=0.5):
+    return [(cx + r * math.cos(2 * math.pi * (k + phase) / seg),
+             cy + r * math.sin(2 * math.pi * (k + phase) / seg)) for k in range(seg)]
 
 
 def rect(x0, y0, x1, y1):
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
-def side_details(sign):
-    """decals for one face: sign +1 = front (side A), -1 = back (side B,
-    seen mirrored). Decals never overlap each other (rings and strips are
-    built side by side), so nothing can z-fight."""
+HX, HY = 0.0, 5.1              # hub centre
+UR = 1.55                      # half width of the U recess
+LX0, LY0, LX1, LY1 = -2.85, 1.45, 2.85, 3.75    # label recess
+IX0, IY0, IX1, IY1 = -2.72, 1.56, 2.72, 3.64    # the label (picture) in it
+
+
+def side(sign):
+    """the details of one face: sign +1 = side A (front, +Z), -1 = side B.
+    Layers: recesses at 0.02 cm, things on them at 0.04, 0.05, 0.06."""
     z = Z1 if sign > 0 else Z0
-    lift = 0.04
 
-    def P(x, y):
-        return (x, y, z + lift * sign)
+    def d(pts, col, lift):
+        # side B is seen from behind: mirror x so the layout matches side A
+        m.polygon([(x * sign, y, z + lift * sign) for x, y in pts], col, normal=(0, 0, sign))
 
-    def d(pts, col):
-        m.polygon([P(x, y) for x, y in pts], col, normal=(0, 0, sign))
+    # U-shaped recess from the top edge around the hub
+    u = [(-UR, H - 0.02), (-UR, HY)]
+    for k in range(1, 8):
+        a = math.pi + math.pi * k / 8
+        u.append((HX + UR * math.cos(a), HY + UR * math.sin(a)))
+    u += [(UR, HY), (UR, H - 0.02)]
+    d(u, SHADE, 0.02)
+    # head window and hub
+    d(rect(-0.36, 6.15, 0.36, 8.6), WINDOW, 0.04)
+    d(circle(HX, HY, 0.78, 10), HUB, 0.04)
+    d(circle(HX, HY, 0.38, 8), METAL, 0.05)
+    d(circle(HX, HY, 0.13, 6, 0.0), HOLE, 0.06)
+    # write-protect holes in the top corners
+    for s in (-1, 1):
+        d(rect(s * 3.35 - 0.17, 8.12, s * 3.35 + 0.17, 8.55), HOLE, 0.02)
+    # label recess
+    d(rect(LX0, LY0, LX1, LY1), SHADE, 0.02)
+    if sign < 0:
+        d(rect(IX0, IY0, IX1, IY1), LABEL, 0.04)
+    # grip band with raised blocks (the embossed name, as plain blocks)
+    d(rect(-3.5, 0.2, 3.5, 1.08), SHADE, 0.02)
+    n, bw, gap = 8, 0.7, 0.14
+    x = -(n * bw + (n - 1) * gap) / 2
+    for k in range(n):
+        d(rect(x, 0.32, x + bw, 0.96), HI, 0.04)
+        x += bw + gap
 
-    def ring(outer, inner, col):
-        n = len(outer)
-        for k in range(n):
-            a, b = outer[k], outer[(k + 1) % n]
-            ci, di = inner[(k + 1) % n], inner[k]
-            m.polygon([P(*a), P(*b), P(*ci), P(*di)], col, normal=(0, 0, sign))
 
-    # label on the upper part: white strips with a red band near the top
-    # and a thin blue (side A) / red (side B) rule near the bottom
-    lx0, lx1 = -3.0, 3.0
-    strips = [(5.7, 6.05, LABEL), (6.05, 6.25, BAND_B if sign > 0 else BAND_R),
-              (6.25, 7.85, LABEL), (7.85, 8.25, BAND_R), (8.25, 8.6, LABEL)]
-    for y0, y1, col in strips:
-        d(rect(lx0, y0, lx1, y1), col)
-    # centre hub: bevel ring, silver hub, dark spindle hole
-    hx, hy = 0.0, 4.15
-    ring(circle(hx, hy, 0.95, 10), circle(hx, hy, 0.78, 10), RIM)
-    ring(circle(hx, hy, 0.78, 10), circle(hx, hy, 0.3, 10), HUB)
-    d(circle(hx, hy, 0.3, 10), HUB_IN)
-    # exposed disk window below the hub, with a bevel ring
-    ring(stadium(0.0, 2.2, 5.0, 1.0), stadium(0.0, 2.2, 4.7, 0.72), RIM)
-    d(stadium(0.0, 2.2, 4.7, 0.72), MEDIA)
-    # recessed band for the embossed brand name along the bottom edge
-    d(rect(-2.6, 0.35, 2.6, 1.15), EMBOSS)
+side(+1)
+side(-1)
 
-
-side_details(+1)
-side_details(-1)
+# the picture: the label on side A, upright (u left to right, v bottom to top)
+m.image_xy(IX0, IY0, IX1, IY1, Z1, fallback=LABEL, lift=0.04)
 
 if __name__ == '__main__':
     print(m.stats())

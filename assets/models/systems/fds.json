@@ -1,0 +1,18 @@
+{
+  "console": "../consoles/fds.obj",
+  "media": "../media/fds.obj",
+  "view": [24, 20],
+  "parts": {
+    "flap": {"hinge": {"pivot": [0, 5.591, 10.84], "axis": [1, 0, 0], "angle": 88}},
+    "eject": {"slide": [0, 0, 0.45]}
+  },
+  "path": [
+    {"pos": [-0.5, 5.076, 23.8], "rot": [-90, 0, 0]},
+    {"pos": [-0.5, 5.076, 12.3], "rot": [-90, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.15, "open": ["flap"]},
+    {"time": 0.9, "media": [0, 1]},
+    {"time": 0.15, "open": ["eject"]}
+  ]
+}

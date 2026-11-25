@@ -1,101 +1,84 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""TurboGrafx-CD game disc in its CD jewel case, standing upright, front to +Z.
+"""TurboGrafx-CD / PC Engine CD-ROM2 game disc: a bare 12 cm CD, standing
+upright on its edge, label side to +Z.
 
-Real size ~14.2 x 12.5 x 1.0 cm. Signature features: the clear case (light
-blue-grey edges and a raised frame around the lid), the ridged hinge strip
-down the left side, the black tray seen through the lid, the silver 12 cm
-disc with the system's orange label (black ring, silver inner ring, clear
-hub, centre hole), the black cover header band across the top of the front
-with an orange stripe (the TurboGrafx look), and the black spine with an
-orange band.
+Real size: 12.0 cm across, 0.12 cm thick, 1.5 cm centre hole. Seen from the
+label side (as on the real disc): the centre hole, the clear plastic hub out
+to the stacking ring (r ~1.65 cm), a narrow mirror band, the printed label
+from r 2.0 to r 5.8 cm (the game's picture), and a thin mirror rim at the
+outer edge. The back is the silver data side with the same clear hub.
+
+The disc is the media that drops into the CD drive well (label side up), so
+it is a clean closed ring: outer edge at r = 6.0, hole at r = 0.75, faces at
+z = +-0.06, centre at (0, 6, 0), bottom edge touching y = 0.
 """
 import math
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-CLEAR = (178, 190, 204)      # clear plastic edges / lid frame
-HINGE = (214, 222, 232)      # hinge strip (thicker clear plastic, catches light)
-HINGE_D = (120, 132, 148)    # hinge ridges
-TRAY = (30, 30, 36)          # dark tray seen through the lid
-SILVER = (226, 230, 238)     # disc surface
-LABEL = (240, 120, 24)       # orange disc label
-LABEL2 = (16, 16, 18)        # black ring on the label
-HUB = (128, 136, 150)        # clear hub of the disc
-HOLE = (8, 8, 10)            # centre hole
-BAND = (12, 12, 14)          # black cover header band
-ORANGE = (250, 140, 30)      # orange stripe under / in the band
-COVER = (60, 66, 110)        # back insert artwork area
-SPINE = (24, 24, 28)         # spine / back insert
+SILVER = (214, 218, 228)     # mirror rim / mirror band on the label side
+DATA = (226, 230, 242)       # silver data side (bright mirror, slight cool sheen)
+EDGE = (138, 146, 160)       # outer edge of the disc
+HUB = (92, 104, 126)         # clear plastic hub (looks dark, shows what is behind)
+HOLE = (40, 44, 54)          # inside of the centre hole
+LABEL = (26, 26, 32)         # plain label colour (fallback for the picture)
 
-W, H = 14.2, 12.5
-X0, X1 = -W / 2, W / 2
-ZB, ZF = -0.5, 0.3           # case body back / tray face (recessed so the disc decals sit inside the lid frame)
-ZL = 0.5                     # raised lid frame / hinge front
-HW = 1.0                     # hinge strip width on the left
-F = 0.35                     # lid frame width
+R, RH = 6.0, 0.75            # outer radius, centre hole radius
+RS = 1.65                    # clear hub / stacking ring radius
+RL0, RL1 = 2.0, 5.8          # printed label: inner and outer radius
+T = 0.12                     # thickness
+ZF, ZB = T / 2, -T / 2
+CX, CY = 0.0, R              # disc centre (bottom edge on y = 0)
+N = 20                       # segments of the outer circles (a vertex at the bottom)
+NH = 10                      # segments of the centre hole
 
 m = Model('pcenginecd', 'media')
 
-# case body: dark tray face on the front, clear sides, black spine on the left
-m.box(X0, 0, ZB, X1, H, ZF, CLEAR, faces={'front': TRAY, 'back': SPINE, 'left': SPINE})
 
-# raised clear lid frame around the front
-m.box(X0 + HW, H - F, ZF, X1, H, ZL, CLEAR, faces={'back': None})
-m.box(X0 + HW, 0, ZF, X1, F, ZL, CLEAR, faces={'back': None})
-m.box(X1 - F, F, ZF, X1, H - F, ZL, CLEAR, faces={'back': None, 'top': None, 'bottom': None})
-
-# hinge strip down the left edge, with ridges at the hinge knuckles
-m.box(X0, 0, ZF, X0 + HW, H, ZL + 0.04, HINGE, faces={'back': None})
-for y in (0.8, 1.5, H - 1.75, H - 1.05):
-    m.decal_xy([(X0 + 0.15, y), (X0 + HW - 0.15, y), (X0 + HW - 0.15, y + 0.25), (X0 + 0.15, y + 0.25)],
-               ZL + 0.04, HINGE_D, lift=0.02)
+def pt(r, i, n, z):
+    a = 2 * math.pi * i / n
+    return (CX + r * math.cos(a), CY + r * math.sin(a), z)
 
 
-def circle(cx, cy, r, n):
-    return [(cx + r * math.cos(2 * math.pi * i / n + math.pi / n),
-             cy + r * math.sin(2 * math.pi * i / n + math.pi / n)) for i in range(n)]
+def ring(r0, r1, z, col, front):
+    """flat annulus r0..r1 at depth z, N segments, facing +Z or -Z"""
+    nrm = (0, 0, 1 if front else -1)
+    for i in range(N):
+        m.polygon([pt(r0, i, N, z), pt(r1, i, N, z), pt(r1, i + 1, N, z), pt(r0, i + 1, N, z)], col, normal=nrm)
 
 
-def clip_below(poly, ytop):
-    """Clip a convex outline to y <= ytop (so decals never overlap the band:
-    stacked decals over long thin triangles z-fight)."""
-    out = []
-    for i in range(len(poly)):
-        a, b = poly[i], poly[(i + 1) % len(poly)]
-        ina, inb = a[1] <= ytop, b[1] <= ytop
-        if ina:
-            out.append(a)
-        if ina != inb:
-            t = (ytop - a[1]) / (b[1] - a[1])
-            out.append((a[0] + t * (b[0] - a[0]), ytop))
-    return out
+def hub(z, front):
+    """clear hub annulus RH..RS: NH segments inside, N outside (3 triangles each)"""
+    nrm = (0, 0, 1 if front else -1)
+    for k in range(NH):
+        i0, i1 = pt(RH, k, NH, z), pt(RH, k + 1, NH, z)
+        o0, o1, o2 = pt(RS, 2 * k, N, z), pt(RS, 2 * k + 1, N, z), pt(RS, 2 * k + 2, N, z)
+        m.polygon([i0, o0, o1], HUB, normal=nrm)
+        m.polygon([i0, o1, i1], HUB, normal=nrm)
+        m.polygon([i1, o1, o2], HUB, normal=nrm)
 
 
-# the disc behind the lid; its top runs under the header band (clipped there)
-BY = H - 2.3                                   # bottom of the header band
-DCX, DCY = (X0 + HW + X1 - F) / 2, (BY + F) / 2 + 0.35
-m.decal_xy(clip_below(circle(DCX, DCY, 5.6, 20), BY), ZF, SILVER, lift=0.02)
-m.decal_xy(clip_below(circle(DCX, DCY, 4.6, 20), BY), ZF, LABEL, lift=0.05)
-m.decal_xy(circle(DCX, DCY, 2.5, 14), ZF, LABEL2, lift=0.08)
-m.decal_xy(circle(DCX, DCY, 2.05, 14), ZF, SILVER, lift=0.11)
-m.decal_xy(circle(DCX, DCY, 1.5, 12), ZF, HUB, lift=0.14)
-m.decal_xy(circle(DCX, DCY, 0.72, 8), ZF, HOLE, lift=0.17)
+# label side: clear hub, mirror band + rim (under the label), the label picture
+hub(ZF, True)
+ring(RS, R, ZF, SILVER, True)
+m.image_ring(CX, CY, ZF + 0.03, RL0, RL1, segments=N, fallback=LABEL)
 
-# black header band across the top of the front cover with an orange stripe
-# (side by side at one depth, not stacked, so nothing can z-fight)
-for ya, yb, col in ((BY, BY + 0.35, BAND), (BY + 0.35, BY + 0.7, ORANGE), (BY + 0.7, H - F, BAND)):
-    m.decal_xy([(X0 + HW, ya), (X1 - F, ya), (X1 - F, yb), (X0 + HW, yb)], ZF, col, lift=0.04)
+# data side
+hub(ZB, False)
+ring(RS, R, ZB, DATA, False)
 
-# back insert: artwork panel and the black band with orange stripe
-ZK = ZB - 0.02
-m.polygon([(X1 - 0.7, 0.9, ZK), (X0 + 1.2, 0.9, ZK), (X0 + 1.2, H - 3.0, ZK), (X1 - 0.7, H - 3.0, ZK)],
-          COVER, normal=(0, 0, -1))
-m.polygon([(X1 - 0.08, H - 2.2, ZK), (X0 + 0.08, H - 2.2, ZK), (X0 + 0.08, H - 1.8, ZK), (X1 - 0.08, H - 1.8, ZK)],
-          ORANGE, normal=(0, 0, -1))
-# spine: orange band near the top of the black spine
-m.polygon([(X0 - 0.02, H - 2.4, ZB + 0.05), (X0 - 0.02, H - 2.4, ZF - 0.05),
-           (X0 - 0.02, H - 1.6, ZF - 0.05), (X0 - 0.02, H - 1.6, ZB + 0.05)], ORANGE, normal=(-1, 0, 0))
+# outer edge (faces outwards)
+for i in range(N):
+    a = 2 * math.pi * (i + 0.5) / N
+    m.polygon([pt(R, i, N, ZF), pt(R, i, N, ZB), pt(R, i + 1, N, ZB), pt(R, i + 1, N, ZF)],
+              EDGE, normal=(math.cos(a), math.sin(a), 0))
+
+# centre hole wall (faces the axis)
+for k in range(NH):
+    a = 2 * math.pi * (k + 0.5) / NH
+    m.polygon([pt(RH, k, NH, ZF), pt(RH, k, NH, ZB), pt(RH, k + 1, NH, ZB), pt(RH, k + 1, NH, ZF)],
+              HOLE, normal=(-math.cos(a), -math.sin(a), 0))
 
 print(m.stats())
 m.save()

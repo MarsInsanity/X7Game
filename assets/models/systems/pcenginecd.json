@@ -1,0 +1,17 @@
+{
+  "console": "../consoles/pcenginecd.obj",
+  "media": "../media/pcenginecd.obj",
+  "view": [28, 40],
+  "parts": {
+    "lid": {"hinge": {"pivot": [0, 13.25, -14.76], "axis": [1, 0, 0], "angle": -95}}
+  },
+  "path": [
+    {"pos": [0, 27.0, -2.11], "rot": [-90, 0, 0]},
+    {"pos": [0, 12.06, -2.11], "rot": [-90, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.35, "open": ["lid"]},
+    {"time": 0.6, "media": [0, 1]},
+    {"time": 0.35, "close": ["lid"]}
+  ]
+}

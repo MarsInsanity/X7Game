@@ -1,107 +1,109 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Neo Geo AES cartridge: the huge black shell standing upright, label to +Z.
 
-Real size ~18.5 x 13.2 x 3.4 cm (wider than tall). Signature features: the
-sheer chunky size, the black plastic, the big recessed landscape label on
-the front, the band of horizontal grip ridges across the top of the front
-and back, the bevelled top edges, the narrower connector lip at the bottom
-that drops into the console's slot, and the paper sticker on the back.
-Front and back faces are tiled around every label / ridge so nothing is an
-overlapping decal (the software renderer's depth is not perspective
-correct).
+Real size 18.5 x 13.2 x 3.4 cm (wider than tall). What makes it read as an
+AES cart (Commons photos Neo-Geo-AES-Cartridge-Front / -Bottom):
+  * plain black box with softly bevelled top edges;
+  * the label: a near-square sticker in the upper middle of the front that
+    runs up to the top edge and wraps over the top (and down the back);
+  * the top edge dips where the label is: two raised shoulders at the ends,
+    each with grooves running along it;
+  * a band of horizontal grip ridges along the bottom of the front and back
+    (wrapping round the ends), split into four panels (narrow, wide, wide,
+    narrow);
+  * a long guide groove down each end;
+  * the bottom: one wide opening with the two circuit boards' card edges
+    (gold contacts) set back inside.
+
+The game's picture is the front label (one image area). The shell below the
+label is a clean closed box of exactly 18.5 x 3.4 cm, so the console's top
+slot can be built straight around it; only flat decals (ridges, grooves,
+lifted 0.02 cm) sit on it.
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
 
-SHELL = (40, 40, 46)         # black plastic
-EDGE = (66, 66, 76)          # bevels, recess walls, lip step
-RIDGE = (96, 96, 106)        # grip ridges
-GOLD = (214, 170, 60)        # label header strip
-ART = (52, 104, 196)         # label picture (sky)
-ART2 = (236, 140, 36)        # label picture ground
-TITLE = (196, 34, 40)        # label title block
-STICK = (200, 196, 180)      # back sticker
+SHELL = (40, 41, 40)         # black plastic
+BEVEL = (74, 77, 74)         # bevelled top edges
+RIDGE = (107, 109, 107)      # grip ridge highlights
+GROOVE = (10, 10, 12)        # guide grooves, shoulder grooves
+LABEL = (208, 208, 204)      # plain label paper (picture fallback, top / back wrap)
+CAVITY = (16, 16, 16)        # inside the connector opening
+PCB = (40, 98, 60)           # circuit boards
+GOLD = (220, 180, 84)        # card edge contacts
 
 W, H, D = 18.5, 13.2, 3.4
 hw = W / 2
 ZF, ZB = D / 2, -D / 2
-LIP_Y, LIP_Z = 1.0, 1.35      # connector lip: height, half depth
-YT, ZT = 12.45, 1.2           # bevel: starts at YT, top face half depth ZT
+C = 0.3                       # top bevel
+SX, SX0, YD = 5.6, 4.7, 12.8  # shoulder starts at |x| = SX; dip floor |x| < SX0 at y = YD
+LX, LY0, LY1 = 4.55, 5.8, 12.46         # label half width, bottom
 
 m = Model('neogeo', 'media')
 
-
-def face(pts, z, color, nz):
-    """flat face at depth z facing +Z (nz = 1) or -Z (nz = -1); pts are (x, y)"""
-    return m.polygon([(x, y, z) for x, y in pts], color, normal=(0, 0, nz))
-
-
-# ---------------------------------------------------------------- profile: sides, top, bevels, lip
-profile = [(-LIP_Z, 0), (LIP_Z, 0), (LIP_Z, LIP_Y), (ZF, LIP_Y), (ZF, YT), (ZT, H),
-           (-ZT, H), (ZB, YT), (ZB, LIP_Y), (-LIP_Z, LIP_Y)]
+# ---------------------------------------------------------------- shell
+top = [(-hw, H), (-SX, H), (-SX0, YD), (SX0, YD), (SX, H), (hw, H)]   # top edge, left to right
+label_seg = 2                 # index of the dipped (label) segment
+outline = [(-hw, 0), (hw, 0)] + [(x, y - C) for x, y in reversed(top)]
+m.polygon([(x, y, ZF) for x, y in outline], SHELL, normal=(0, 0, 1))
+m.polygon([(x, y, ZB) for x, y in outline], SHELL, normal=(0, 0, -1))
+for i in range(len(top) - 1):
+    (xa, ya), (xb, yb) = top[i], top[i + 1]
+    lab = i == label_seg
+    # front bevel, back bevel, top
+    m.quad((xa, ya - C, ZF), (xb, yb - C, ZF), (xb, yb, ZF - C), (xa, ya, ZF - C), LABEL if lab else BEVEL)
+    m.quad((xb, yb - C, ZB), (xa, ya - C, ZB), (xa, ya, ZB + C), (xb, yb, ZB + C), LABEL if lab else BEVEL)
+    m.quad((xa, ya, ZF - C), (xb, yb, ZF - C), (xb, yb, ZB + C), (xa, ya, ZB + C), LABEL if lab else SHELL)
+side = [(ZB, 0), (ZF, 0), (ZF, H - C), (ZF - C, H), (ZB + C, H), (ZB, H - C)]   # (z, y)
 for sx in (1, -1):
-    m.polygon([(sx * hw, y, z) for z, y in profile], SHELL, normal=(sx, 0, 0))
-m.polygon([(-hw, 0, -LIP_Z), (hw, 0, -LIP_Z), (hw, 0, LIP_Z), (-hw, 0, LIP_Z)], SHELL, normal=(0, -1, 0))
-m.polygon([(-hw, H, -ZT), (hw, H, -ZT), (hw, H, ZT), (-hw, H, ZT)], SHELL, normal=(0, 1, 0))
-m.polygon([(-hw, YT, ZF), (hw, YT, ZF), (hw, H, ZT), (-hw, H, ZT)], EDGE, normal=(0, 0.45, 0.7))
-m.polygon([(-hw, YT, ZB), (hw, YT, ZB), (hw, H, -ZT), (-hw, H, -ZT)], EDGE, normal=(0, 0.45, -0.7))
-for sz in (1, -1):
-    # lip face and the underside of the ledge above it
-    m.polygon([(-hw, 0, sz * LIP_Z), (hw, 0, sz * LIP_Z), (hw, LIP_Y, sz * LIP_Z), (-hw, LIP_Y, sz * LIP_Z)],
-              SHELL, normal=(0, 0, sz))
-    m.polygon([(-hw, LIP_Y, sz * LIP_Z), (hw, LIP_Y, sz * LIP_Z), (hw, LIP_Y, sz * ZF), (-hw, LIP_Y, sz * ZF)],
-              EDGE, normal=(0, -1, 0))
+    m.polygon([(sx * hw, y, z) for z, y in side], SHELL, normal=(sx, 0, 0))
 
-# ---------------------------------------------------------------- grip ridges (front and back)
-gx = 8.3                                   # ridge half width
-RN, RY0, RP, RH, RD = 4, 10.25, 0.5, 0.26, 0.16
-ridges = [(RY0 + i * RP, RY0 + i * RP + RH) for i in range(RN)]
-r0, r1 = ridges[0][0], ridges[-1][1]
+# ---------------------------------------------------------------- bottom: connector opening
+OX, OZ, OY = 7.4, 1.25, 1.0   # opening half width, half depth, cavity height
+m.polygon([(-hw, 0, ZB), (hw, 0, ZB), (hw, 0, ZF), (OX, 0, ZF), (OX, 0, -OZ), (-OX, 0, -OZ),
+           (-OX, 0, ZF), (-hw, 0, ZF)], SHELL, normal=(0, -1, 0))
+m.polygon([(-OX, 0, OZ), (OX, 0, OZ), (OX, 0, ZF), (-OX, 0, ZF)], SHELL, normal=(0, -1, 0))
+# cavity walls (facing inwards) and ceiling
+m.quad((-OX, 0, -OZ), (OX, 0, -OZ), (OX, OY, -OZ), (-OX, OY, -OZ), CAVITY)
+m.quad((OX, 0, OZ), (-OX, 0, OZ), (-OX, OY, OZ), (OX, OY, OZ), CAVITY)
+m.quad((-OX, 0, OZ), (-OX, 0, -OZ), (-OX, OY, -OZ), (-OX, OY, OZ), CAVITY)
+m.quad((OX, 0, -OZ), (OX, 0, OZ), (OX, OY, OZ), (OX, OY, -OZ), CAVITY)
+m.quad((-OX, OY, -OZ), (OX, OY, -OZ), (OX, OY, OZ), (-OX, OY, OZ), CAVITY)
+# the two boards' card edges
+for zc, bx in ((0.5, 6.9), (-0.5, 6.5)):
+    m.box(-bx, 0.3, zc - 0.08, bx, OY, zc + 0.08, PCB,
+          faces={'top': None, 'front': GOLD, 'back': GOLD})
 
+# ---------------------------------------------------------------- grip ridges (front, back, ends)
+RY = [0.45 + 0.55 * i for i in range(4)]     # ridge bottoms
+RH = 0.2
+panels = [(-hw + 0.25, -7.3), (-7.0, -0.15), (0.15, 7.0), (7.3, hw - 0.25)]
+for y in RY:
+    for x0, x1 in panels:
+        m.decal_xy([(x0, y), (x1, y), (x1, y + RH), (x0, y + RH)], ZF, RIDGE)
+        m.polygon([(x1, y, ZB - 0.02), (x0, y, ZB - 0.02), (x0, y + RH, ZB - 0.02), (x1, y + RH, ZB - 0.02)],
+                  RIDGE, normal=(0, 0, -1))
+    for sx in (1, -1):
+        xx = sx * (hw + 0.02)
+        m.polygon([(xx, y, ZB + 0.15), (xx, y, ZF - 0.15), (xx, y + RH, ZF - 0.15), (xx, y + RH, ZB + 0.15)],
+                  RIDGE, normal=(sx, 0, 0))
 
-def ridge_band(z, nz):
-    face([(-hw, r0), (-gx, r0), (-gx, r1), (-hw, r1)], z, SHELL, nz)
-    face([(gx, r0), (hw, r0), (hw, r1), (gx, r1)], z, SHELL, nz)
-    for (_, yb), (yc, _) in zip(ridges, ridges[1:]):
-        face([(-gx, yb), (gx, yb), (gx, yc), (-gx, yc)], z, SHELL, nz)
-    for ya, yb in ridges:
-        if nz > 0:
-            m.box(-gx, ya, z, gx, yb, z + RD, RIDGE, faces={'back': None})
-        else:
-            m.box(-gx, ya, z - RD, gx, yb, z, RIDGE, faces={'front': None})
-    face([(-hw, r1), (-gx, r1), (gx, r1), (hw, r1), (hw, YT), (-hw, YT)], z, SHELL, nz)
+# ---------------------------------------------------------------- guide grooves down the ends
+for sx in (1, -1):
+    xx = sx * (hw + 0.02)
+    m.polygon([(xx, 2.9, 0.75), (xx, 2.9, 1.0), (xx, 10.8, 1.0), (xx, 10.8, 0.75)], GROOVE, normal=(sx, 0, 0))
 
+# ---------------------------------------------------------------- shoulder grooves on top
+for sx in (1, -1):
+    x0, x1 = sorted((sx * (SX + 0.3), sx * (hw - 0.35)))
+    for zc in (0.45, -0.45):
+        m.decal_xz([(x0, zc + 0.09), (x1, zc + 0.09), (x1, zc - 0.09), (x0, zc - 0.09)], H, GROOVE)
 
-ridge_band(ZF, 1)
-ridge_band(ZB, -1)
-
-# ---------------------------------------------------------------- front: recessed label
-lx, ly0, ly1 = 8.3, 2.0, 9.55
-ZL = ZF - 0.16
-face([(-hw, LIP_Y), (hw, LIP_Y), (hw, ly0), (lx, ly0), (-lx, ly0), (-hw, ly0)], ZF, SHELL, 1)
-face([(-hw, ly0), (-lx, ly0), (-lx, ly1), (-hw, ly1)], ZF, SHELL, 1)
-face([(lx, ly0), (hw, ly0), (hw, ly1), (lx, ly1)], ZF, SHELL, 1)
-face([(-hw, ly1), (-lx, ly1), (lx, ly1), (hw, ly1), (hw, r0), (gx, r0), (-gx, r0), (-hw, r0)], ZF, SHELL, 1)
-# recess walls
-m.polygon([(-lx, ly0, ZL), (lx, ly0, ZL), (lx, ly0, ZF), (-lx, ly0, ZF)], EDGE, normal=(0, 1, 0))
-m.polygon([(-lx, ly1, ZL), (lx, ly1, ZL), (lx, ly1, ZF), (-lx, ly1, ZF)], SHELL, normal=(0, -1, 0))
-m.polygon([(-lx, ly0, ZL), (-lx, ly1, ZL), (-lx, ly1, ZF), (-lx, ly0, ZF)], EDGE, normal=(1, 0, 0))
-m.polygon([(lx, ly0, ZL), (lx, ly1, ZL), (lx, ly1, ZF), (lx, ly0, ZF)], SHELL, normal=(-1, 0, 0))
-# label: gold header strip, red title block under it, sky picture, orange ground
-hy, ty, tx, gy = 8.8, 6.7, -1.2, 3.5
-face([(-lx, hy), (lx, hy), (lx, ly1), (-lx, ly1)], ZL, GOLD, 1)
-face([(-lx, ty), (tx, ty), (tx, hy), (-lx, hy)], ZL, TITLE, 1)
-face([(-lx, gy), (lx, gy), (lx, ty), (lx, hy), (tx, hy), (tx, ty), (-lx, ty)], ZL, ART, 1)
-face([(-lx, ly0), (lx, ly0), (lx, gy), (-lx, gy)], ZL, ART2, 1)
-
-# ---------------------------------------------------------------- back: sticker
-bx, by0, by1 = 6.6, 2.6, 8.8
-face([(-hw, LIP_Y), (hw, LIP_Y), (hw, by0), (bx, by0), (-bx, by0), (-hw, by0)], ZB, SHELL, -1)
-face([(-hw, by0), (-bx, by0), (-bx, by1), (-hw, by1)], ZB, SHELL, -1)
-face([(bx, by0), (hw, by0), (hw, by1), (bx, by1)], ZB, SHELL, -1)
-face([(-hw, by1), (-bx, by1), (bx, by1), (hw, by1), (hw, r0), (gx, r0), (-gx, r0), (-hw, r0)], ZB, SHELL, -1)
-face([(-bx, by0), (bx, by0), (bx, by1), (-bx, by1)], ZB, STICK, -1)
+# ---------------------------------------------------------------- label: picture on the front, paper on the back
+m.image_xy(-LX, LY0, LX, LY1, ZF, fallback=LABEL, lift=0.03)
+m.polygon([(LX, LY0, ZB - 0.03), (-LX, LY0, ZB - 0.03), (-LX, LY1, ZB - 0.03), (LX, LY1, ZB - 0.03)],
+          LABEL, normal=(0, 0, -1))
 
 print(m.stats())
 print(m.save())

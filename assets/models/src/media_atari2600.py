@@ -1,115 +1,159 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Atari 2600 cartridge: black shell standing upright, label to +Z,
-connector end at y = 0. Signature features: black plastic slab, horizontal
-grip ribs across the top of the front, a silver-framed picture label with a
-black title band and a red stripe, the end label on the top edge, and the
-dust door across the bottom of the front with its seam."""
+"""Atari 2600 cartridge (the standard Atari shell): a black slab with
+softly rounded corners and bevelled edges, standing upright, connector end
+at y = 0, label side to +Z.
+
+Signature features (from photos of the real shell): the front is almost
+all label, sitting in a shallow pocket inside a narrow black rim; the end
+label on the top edge (silver frame, black field, red title); a matching
+shallow panel on the back; the connector opening in the bottom edge, with
+the black dust door inside it. Tighter corners at the top (grip) end,
+rounder ones at the connector end.
+
+The front label is the picture area (the game's picture, upright when the
+cartridge stands upright). The whole shell (W x H x D = 8.3 x 10.0 x 2.3 cm)
+is one closed shape with flat front / back faces, so the console's slot can
+be built straight around it.
+(The real cartridge goes in with the label to the back of the console; X7
+Game's convention puts the picture to the front.)"""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools', 'models'))
 from x7model import Model
+import math
 
-SHELL = (30, 30, 34)        # black plastic (front / back)
-EDGE = (62, 62, 70)         # side / top faces, so the outline reads
-RIDGE = (96, 96, 106)       # grip ribs
-DOOR = (46, 46, 52)         # dust door
-SEAM = (10, 10, 12)         # door seam
-SILVER = (196, 196, 206)    # label frame, end label
-LBLACK = (16, 16, 20)       # title band
-RED = (216, 40, 32)         # stripe
-SKY = (240, 128, 40)        # picture: sky
-GROUND = (48, 72, 176)      # picture: ground
-SUN = (248, 220, 64)        # picture accent
+SHELL = (34, 34, 38)        # black plastic, front / back
+EDGE = (64, 64, 72)         # sides, top, bevels: so the outline reads
+POCKET = (14, 14, 16)       # label pocket walls
+PANEL = (48, 48, 54)        # back panel floor
+LABEL = (176, 176, 186)     # plain label colour (picture fallback)
+SILVER = (196, 196, 206)    # end label frame
+LBLACK = (18, 18, 22)       # end label field
+RED = (208, 40, 32)         # end label title
+HOLE = (8, 8, 10)           # connector opening walls
+DOOR = (44, 44, 50)         # dust door inside the opening
 
 m = Model('atari2600', 'media')
 
-W, H, D = 8.5, 10.0, 2.3
+W, H, D = 8.3, 10.0, 2.3
 hw = W / 2
 ZF, ZB = D / 2, -D / 2
-CT, CB = 0.45, 0.2          # top / bottom corner chamfers
+C = 0.14                    # edge bevel
+RT, RB = 0.35, 0.6          # corner radius at the top (grip) end / connector end
+SEG = 2                     # segments per corner arc
 
 
-GY, GT = 7.5, 0.25          # grip end: starts at height GY, steps out GT
-
-# ---- shell: a chamfered slab (side edges split at GY so the grip block
-# meets them without a T-junction crack)
-outline = [(-hw + CB, 0), (hw - CB, 0), (hw, CB), (hw, GY), (hw, H - CT), (hw - CT, H),
-           (-hw + CT, H), (-hw, H - CT), (-hw, GY), (-hw, CB)]
-m.extrude_xy(outline, ZB, ZF, SHELL, side=EDGE)
-
-# ---- thicker grip end: the top of the shell steps out front and back
-grip = [(-hw, GY), (hw, GY), (hw, H - CT), (hw - CT, H), (-hw + CT, H), (-hw, H - CT)]
-m.extrude_xy(grip, ZF, ZF + GT, SHELL, back=False, side=EDGE)
-m.extrude_xy(grip, ZB - GT, ZB, SHELL, front=False, side=EDGE)
-
-# end label on the top edge
-m.decal_xz([(-hw + CT + 0.3, -0.95), (hw - CT - 0.3, -0.95), (hw - CT - 0.3, 0.95), (-hw + CT + 0.3, 0.95)],
-           H, SILVER, lift=0.03)
-
-# ---- grip ribs across the grip end, front and back
-for i in range(5):
-    y = 7.75 + i * 0.42
-    m.box(-hw + 0.35, y, ZF + GT, hw - 0.35, y + 0.2, ZF + GT + 0.14, RIDGE,
-          faces={'back': None, 'bottom': None})
-    m.box(-hw + 0.35, y, ZB - GT - 0.12, hw - 0.35, y + 0.2, ZB - GT, RIDGE,
-          faces={'front': None, 'bottom': None})
-
-# ---- dust door across the bottom of the front, with its seam above
-DX = hw - 0.45
-m.box(-DX, 0.0, ZF, DX, 1.45, ZF + 0.06, DOOR, faces={'back': None, 'bottom': None})
-m.box(-DX, 1.45, ZF, DX, 1.6, ZF + 0.02, SEAM, faces={'back': None, 'bottom': None, 'top': None})
-# finger notch on the door
-m.decal_xy([(-1.2, 0.55), (1.2, 0.55), (1.2, 0.8), (-1.2, 0.8)], ZF + 0.06, SEAM, lift=0.03)
-
-# ---- label: thin raised slab, its face tiled into the silver frame, the
-# picture and the title bands. Every row is split at x = 0 and no strip is
-# thinner than 0.2 cm, so no triangle is a long sliver (those crack in a
-# software rasteriser); tiles share the vertices along their edges.
-lx, ly0, ly1 = 3.75, 2.2, 7.35
-ZL = ZF + 0.06
-fx = lx - 0.25                      # inner edge of the silver frame
-rows = [  # (y0, y1, [(x0, x1, colour), ...]) covering -lx..lx
-    (ly0, 2.45, [(-lx, lx, SILVER)]),
-    (2.45, 4.0, [(-lx, -fx, SILVER), (-fx, fx, GROUND), (fx, lx, SILVER)]),
-    (4.0, 5.75, [(-lx, -fx, SILVER), (-fx, fx, SKY), (fx, lx, SILVER)]),
-    (5.75, 6.0, [(-lx, lx, SILVER)]),
-    (6.0, 6.85, [(-lx, lx, LBLACK)]),
-    (6.85, 7.13, [(-lx, lx, RED)]),
-    (7.13, ly1, [(-lx, lx, SILVER)]),
-]
-tiles = []
-for y0, y1, segs in rows:
-    for x0, x1, c in segs:
-        xs = [x0] + ([0.0] if x0 < 0.0 < x1 else []) + [x1]
-        for xa, xb in zip(xs, xs[1:]):
-            tiles.append(([(xa, y0), (xb, y0), (xb, y1), (xa, y1)], c))
-pool = sorted({p for pts, _ in tiles for p in pts})
+def outline(inset):
+    """corner groups TR, TL, BL, BR (counter-clockwise seen from +Z), each a
+    list of SEG + 1 points; `inset` shrinks the outline evenly"""
+    groups = []
+    for cx, cy, a0, r in [(hw - RT, H - RT, 0, RT), (-hw + RT, H - RT, 90, RT),
+                          (-hw + RB, RB, 180, RB), (hw - RB, RB, 270, RB)]:
+        rr = r - inset
+        groups.append([(cx + rr * math.cos(math.radians(a0 + 90 * s / SEG)),
+                        cy + rr * math.sin(math.radians(a0 + 90 * s / SEG))) for s in range(SEG + 1)])
+    return groups
 
 
-def split(pts):
-    """insert every pool point lying strictly inside one of the polygon's
-    edges (no T-junction cracks between neighbouring tiles)"""
-    out = []
-    for i, (xa, ya) in enumerate(pts):
-        xb, yb = pts[(i + 1) % len(pts)]
-        out.append((xa, ya))
-        dx, dy = xb - xa, yb - ya
-        l2 = dx * dx + dy * dy
-        mid = []
-        for px, py in pool:
-            t = ((px - xa) * dx + (py - ya) * dy) / l2
-            if 1e-6 < t < 1 - 1e-6 and abs((px - xa) * dy - (py - ya) * dx) < 1e-6:
-                mid.append((t, (px, py)))
-        out += [q for _, q in sorted(set(mid))]
-    return out
+def flat(groups):
+    return [p for g in groups for p in g]
 
 
-for pts, c in tiles:
-    m.polygon([(x, y, ZL) for x, y in split(pts)], c, normal=(0, 0, 1))
-m.extrude_xy(split([(-lx, ly0), (lx, ly0), (lx, ly1), (-lx, ly1)]), ZF, ZL, SILVER, front=False, back=False)
+CENTRE = (0.0, H / 2, 0.0)
 
-# picture accents (small, so a lifted decal is safe): a sun and a mountain
-m.decal_xy([(1.3, 4.6), (2.5, 4.6), (2.5, 5.5), (1.3, 5.5)], ZL, SUN, lift=0.04)
-m.decal_xy([(-3.1, 3.7), (-0.3, 3.7), (-1.7, 5.15)], ZL, GROUND, lift=0.04)
+
+def quad_out(a, b, c, d, col, inward=False):
+    """a quad whose winding is fixed so it faces away from the body centre
+    (or towards `inward`'s axis when inward is given as a point)"""
+    n = (0.0, 0.0, 0.0)
+    u = [b[i] - a[i] for i in range(3)]
+    v = [d[i] - a[i] for i in range(3)]
+    n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+    mid = [(a[i] + b[i] + c[i] + d[i]) / 4 for i in range(3)]
+    ref = inward if inward else CENTRE
+    out = [mid[i] - ref[i] for i in range(3)]
+    s = sum(n[i] * out[i] for i in range(3))
+    if (s < 0) != bool(inward):
+        return m.quad(d, c, b, a, col)
+    return m.quad(a, b, c, d, col)
+
+
+full = flat(outline(0.0))
+ins = flat(outline(C))
+N = len(full)
+
+# ---- sides: the full outline from back bevel to front bevel; the bottom
+# segment (connector end, between BL and BR groups) is left for the opening
+ZF1, ZB1 = ZF - C, ZB + C
+BOT = 3 * (SEG + 1) - 1           # index of the last BL point (start of the bottom edge)
+for i in range(N):
+    a, b = full[i], full[(i + 1) % N]
+    if i != BOT:
+        quad_out((a[0], a[1], ZB1), (b[0], b[1], ZB1), (b[0], b[1], ZF1), (a[0], a[1], ZF1), EDGE)
+    # bevels front and back
+    ia, ib = ins[i], ins[(i + 1) % N]
+    quad_out((a[0], a[1], ZF1), (b[0], b[1], ZF1), (ib[0], ib[1], ZF), (ia[0], ia[1], ZF), EDGE)
+    quad_out((a[0], a[1], ZB1), (b[0], b[1], ZB1), (ib[0], ib[1], ZB), (ia[0], ia[1], ZB), EDGE)
+
+
+def frame(groups, inner, z, normal, col):
+    """a flat face at depth z: the (inset) outline around a rectangular
+    hole whose corners `inner` (TR, TL, BL, BR) each fan to one corner group"""
+    for k in range(4):
+        g, I = groups[k], inner[k]
+        for p, q in zip(g, g[1:]):
+            m.polygon([(I[0], I[1], z), (p[0], p[1], z), (q[0], q[1], z)], col, normal=normal)
+        gn, In = groups[(k + 1) % 4], inner[(k + 1) % 4]
+        m.polygon([(g[-1][0], g[-1][1], z), (gn[0][0], gn[0][1], z), (In[0], In[1], z), (I[0], I[1], z)],
+                  col, normal=normal)
+
+
+def pocket(inner, z, depth, normal_sign, wall, floor):
+    """the walls and floor of a shallow rectangular pocket"""
+    zf = z - normal_sign * depth
+    ref = (0.0, (inner[0][1] + inner[2][1]) / 2, zf)
+    for k in range(4):
+        a, b = inner[k], inner[(k + 1) % 4]
+        quad_out((a[0], a[1], z), (b[0], b[1], z), (b[0], b[1], zf), (a[0], a[1], zf), wall, inward=ref)
+    m.polygon([(p[0], p[1], zf) for p in inner], floor, normal=(0, 0, normal_sign))
+    return zf
+
+
+# ---- front: narrow rim around the label pocket; the label is the picture
+LX, LY0, LY1 = 3.68, 0.52, 9.5               # pocket
+front_in = [(LX, LY1), (-LX, LY1), (-LX, LY0), (LX, LY0)]
+frame(outline(C), front_in, ZF, (0, 0, 1), SHELL)
+zf = pocket(front_in, ZF, 0.1, 1, POCKET, LBLACK)
+PX, PY0, PY1 = 3.58, 0.62, 9.4               # the label sticker inside the pocket
+m.image_xy(-PX, PY0, PX, PY1, zf, fallback=LABEL, lift=0.03)
+
+# ---- back: the same rim around a shallow moulded panel
+BX, BY0, BY1 = 3.45, 0.9, 9.1
+back_in = [(BX, BY1), (-BX, BY1), (-BX, BY0), (BX, BY0)]
+frame(outline(C), back_in, ZB, (0, 0, -1), SHELL)
+pocket(back_in, ZB, 0.08, -1, POCKET, PANEL)
+
+# ---- bottom (connector end): the bottom face around the opening, the
+# opening's walls and the dust door inside
+a, b = full[BOT], full[BOT + 1]               # (-hw + RB, 0), (hw - RB, 0)
+OX, OZ0, OZ1, OH = 3.3, -0.62, 0.62, 0.7
+outer = [(b[0], ZF1), (a[0], ZF1), (a[0], ZB1), (b[0], ZB1)]     # x, z
+inner = [(OX, OZ1), (-OX, OZ1), (-OX, OZ0), (OX, OZ0)]
+for k in range(4):
+    p, q = outer[k], outer[(k + 1) % 4]
+    r, s = inner[(k + 1) % 4], inner[k]
+    m.polygon([(p[0], 0, p[1]), (q[0], 0, q[1]), (r[0], 0, r[1]), (s[0], 0, s[1])], EDGE, normal=(0, -1, 0))
+ref = (0.0, OH / 2, 0.0)
+for k in range(4):
+    p, q = inner[k], inner[(k + 1) % 4]
+    quad_out((p[0], 0, p[1]), (q[0], 0, q[1]), (q[0], OH, q[1]), (p[0], OH, p[1]), HOLE, inward=ref)
+m.polygon([(p[0], OH, p[1]) for p in inner], DOOR, normal=(0, -1, 0))
+
+# ---- end label on the top edge: silver frame, black field, red title bar
+TX, TZ = hw - RT - 0.15, 0.82
+m.decal_xz([(-TX, -TZ), (TX, -TZ), (TX, TZ), (-TX, TZ)], H, SILVER, lift=0.015)
+m.decal_xz([(-TX + 0.12, -TZ + 0.12), (TX - 0.12, -TZ + 0.12), (TX - 0.12, TZ - 0.12), (-TX + 0.12, TZ - 0.12)],
+           H, LBLACK, lift=0.03)
+m.decal_xz([(-1.5, -0.2), (1.5, -0.2), (1.5, 0.2), (-1.5, 0.2)], H, RED, lift=0.045)
 
 print(m.stats())
 print(m.save())

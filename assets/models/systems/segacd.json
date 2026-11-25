@@ -1,0 +1,18 @@
+{
+  "console": "../consoles/segacd.obj",
+  "media": "../media/segacd.obj",
+  "view": [32, 30],
+  "parts": {
+    "tray": {"slide": [0, 0, 14.5]}
+  },
+  "path": [
+    {"pos": [-6.7, 10.5, 24.0], "rot": [-90, 0, 0]},
+    {"pos": [-6.7, 2.78, 24.0], "rot": [-90, 0, 0]},
+    {"pos": [-6.7, 2.78, 9.5], "rot": [-90, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.4, "open": ["tray"]},
+    {"time": 0.45, "media": [0, 1]},
+    {"time": 0.5, "close": ["tray"], "media": [1, 2]}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "console": "../consoles/atari7800.obj",
+  "media": "../media/atari7800.obj",
+  "view": [30, 28],
+  "parts": {},
+  "path": [
+    {"pos": [0, 16.5, -4.7], "rot": [0, 0, 0]},
+    {"pos": [0, 7.6, -4.7], "rot": [0, 0, 0]},
+    {"pos": [0, 0.14, -4.7], "rot": [0, 0, 0]}
+  ],
+  "steps": [
+    {"time": 0.5, "media": [0, 1]},
+    {"time": 0.55, "media": [1, 2]}
+  ]
+}
