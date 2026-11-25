@@ -12,8 +12,9 @@ One-colour SVG icons for the frontend's apps, on a 48 x 48 grid:
 | `photos.svg` | Photos: a picture frame with mountains and the sun |
 
 Each icon is one `<path>` with one fill colour:
-- **Colour:** the frontend's accent, `#00AAAA`, the cyan of the test game
-  list's highlight.
+- **Colour:** the frontend's accent, `#A596E7`, a light SNES-like purple. It is
+  exact in RGB565, so it does not shift on the 16-bit screen. It reads best on
+  dark to mid-dark grey: at least 3:1 contrast up to `#505050`.
 - **Simple to draw:** there are no strokes, gradients, masks or transforms,
   so a simple SVG rasteriser draws them correctly.
 - **Cut-outs** (the D-pad, the disc's hole, the play triangle) are holes in

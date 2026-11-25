@@ -19,7 +19,7 @@ import math
 import os
 import sys
 
-ACCENT = '#00AAAA'      # the accent of the test game list (console cyan)
+ACCENT = '#A596E7'      # the frontend accent: a light SNES-like purple (exact in RGB565)
 OUT = os.path.dirname(os.path.abspath(__file__))
 
 
